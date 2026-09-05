@@ -1,0 +1,58 @@
+# DSSATspatial initialization with dynamic environment patching
+
+import os
+import re
+import shutil
+import tempfile
+import threading
+import warnings
+
+# 1. Dynamic Environment Setup
+_exe_name = os.environ.get('DSSAT_EXE', 'dscsm0485.exe')
+os.environ['DSSAT_EXE'] = _exe_name
+_version_match = re.search(r'\d+', _exe_name)
+if _version_match:
+    os.environ['DSSAT_DATA'] = f"Data_{int(_version_match.group())}"
+
+# 2. Configure Temp Directory Dynamically
+# Defaults to standard system temp, but accepts user overrides from os.environ
+_system_temp = os.path.join(tempfile.gettempdir(), "DSSAT_Batch_Temp")
+_custom_temp = os.environ.get('DSSAT_CUSTOM_TEMP', _system_temp)
+
+if os.path.exists(_custom_temp):
+    shutil.rmtree(_custom_temp, ignore_errors=True)
+os.makedirs(_custom_temp, exist_ok=True)
+os.environ['TMP'] = _custom_temp
+os.environ['TEMP'] = _custom_temp
+tempfile.tempdir = _custom_temp
+
+# 3. Thread-Safe Symlink Patch to bypass Windows Administrator limits
+_symlink_lock = threading.Lock()
+_original_symlink = os.symlink
+
+def _symlink_patch(src, dst, target_is_directory=False, *, dir_fd=None):
+    with _symlink_lock:
+        try:
+            _original_symlink(src, dst, target_is_directory=target_is_directory, dir_fd=dir_fd)
+        except OSError:
+            if os.path.exists(dst):
+                return
+            if os.path.isdir(src):
+                shutil.copytree(src, dst, dirs_exist_ok=True)
+            else:
+                shutil.copy2(src, dst)
+os.symlink = _symlink_patch
+warnings.filterwarnings('ignore', category=DeprecationWarning)
+
+# Core Library Imports
+VERSION = '048'
+
+from . import crop
+from .soil import SoilProfile, SoilLayer
+from .weather import WeatherStation, WeatherRecord
+from .run import DSSAT
+from . import filex
+
+__all__ = [
+    'crop', 'SoilProfile', 'WeatherStation', 'DSSAT', 'filex'
+]
