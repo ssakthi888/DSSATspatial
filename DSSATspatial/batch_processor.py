@@ -20,13 +20,7 @@ from . import partypes
 from .run import DSSAT
 
 # Global Execution Constants
-SDATE_BUFFER_DAYS = 7
 FERT_MATERIAL = {'N': 'FE005', 'P': 'FE010', 'K': 'FE016'}
-SUMMARY_FILENAME = "Summary.OUT"
-COLUMNS_TO_KEEP = [
-    "Treatment", "cultivar", "Latitude", "Longitude", "WYEAR", 
-    "HWAM", "ADAT", "MDAT", "SDAT", "PDAT", "HDAT"
-]
 
 # 1. Environment Setup
 def prepare_workspace(sim_dir, is_batch=True):
@@ -551,7 +545,7 @@ def load_treatment_cultivar_map(master_xlsx, master_sheet):
     master_df.columns = master_df.columns.str.strip()
     return dict(zip(master_df['treatment'].astype(int), master_df['cultivar']))
 
-def run_dssat(row_number, xlsx_path, sheet_name, sim_dir, wth_folder, treatments, stations, soils, crops, sdate_buffer=SDATE_BUFFER_DAYS, fert_material=FERT_MATERIAL): 
+def run_dssat(row_number, xlsx_path, sheet_name, sim_dir, wth_folder, treatments, stations, soils, crops, sdate_buffer=7, fert_material=FERT_MATERIAL): 
    
     # 1. Load the master dataframe
     df = pd.read_excel(xlsx_path, sheet_name=sheet_name)
@@ -580,7 +574,7 @@ def run_dssat(row_number, xlsx_path, sheet_name, sim_dir, wth_folder, treatments
             
     return result
 
-def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, stations, soils, crops, max_workers=8, batch_size=100, sdate_buffer=SDATE_BUFFER_DAYS, fert_material=FERT_MATERIAL, columns_to_keep=COLUMNS_TO_KEEP, summary_filename=SUMMARY_FILENAME):
+def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, stations, soils, crops, max_workers=8, batch_size=100, sdate_buffer=7, fert_material=FERT_MATERIAL, columns_to_keep=None, summary_filename="Summary.OUT"):
     # Automatically prepare directories and derive internal paths
     log_dir, archive_dir, failed_log, output_csv = prepare_workspace(sim_dir,is_batch=True)
 
@@ -686,8 +680,8 @@ def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, st
                             df.insert(3, "Latitude", None)
                             df.insert(4, "Longitude", None)
                             
-                        available_cols = [c for c in columns_to_keep if c in df.columns]
-                        batch_dfs.append(df[available_cols])
+                        # Keep all columns for the individual batch files
+                        batch_dfs.append(df)
                         is_success = True
                 
                 if is_success:
@@ -698,11 +692,8 @@ def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, st
             
             if batch_dfs:
                 merged_df = pd.concat(batch_dfs, ignore_index=True)
-                for col in columns_to_keep:
-                    if col not in merged_df.columns:
-                        merged_df[col] = None
-                merged_df = merged_df[columns_to_keep]
                 
+                # Save the batch CSV with all columns intact
                 batch_csv_path = os.path.join(archive_dir, f"Success_Batch_{batch_idx:04d}.csv")
                 merged_df.to_csv(batch_csv_path, index=False)
             
@@ -720,10 +711,17 @@ def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, st
             shutil.rmtree(error_temp)
 
         # Final Step: Merge all individual batch CSVs into the master dataset
-        import glob
         batch_csv_files = glob.glob(os.path.join(archive_dir, "Success_Batch_*.csv"))
         if batch_csv_files:
             merged_master_df = pd.concat([pd.read_csv(f) for f in batch_csv_files], ignore_index=True)
+            
+            # Apply the filter exclusively if columns_to_keep is explicitly provided
+            if columns_to_keep:
+                for col in columns_to_keep:
+                    if col not in merged_master_df.columns:
+                        merged_master_df[col] = None
+                merged_master_df = merged_master_df[columns_to_keep]
+            
             merged_master_df.to_csv(output_csv, index=False)
             
     finally:
