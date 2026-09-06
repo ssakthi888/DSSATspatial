@@ -10,61 +10,51 @@ import pyarrow.parquet as pq
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
-import re
+import zipfile
 
 # Import base DSSAT classes
-from . import filex, WeatherStation, SoilProfile
+from . import filex, WeatherStation, SoilProfile, crop
 from contextlib import redirect_stdout
 from . import partypes
 from .run import DSSAT
 
-def prepare_workspace(sim_dir, log_dir, archive_dir, failed_log):
-    # Initialize DSSATTools base parameters
-    partypes.CODE_VARS['smodel'] = []
+# Global Execution Constants
+SDATE_BUFFER_DAYS = 7
+FERT_MATERIAL = {'N': 'FE005', 'P': 'FE010', 'K': 'FE016'}
+SUMMARY_FILENAME = "Summary.OUT"
+COLUMNS_TO_KEEP = [
+    "Treatment", "cultivar", "Latitude", "Longitude", "WYEAR", 
+    "HWAM", "ADAT", "MDAT", "SDAT", "PDAT", "HDAT"
+]
+
+# 1. Environment Setup
+def prepare_workspace(sim_dir, is_batch=True):
+    # Ensure base simulation directory exists safely
+    os.makedirs(sim_dir, exist_ok=True)
     
-    # Suppress hardcoded print statement and remove dummy subfolder
+    # Initialize DSSATspatial base parameters to prevent first-run crashes
+    partypes.CODE_VARS['smodel'] = []
+    from contextlib import redirect_stdout
     with open(os.devnull, 'w') as null_out, redirect_stdout(null_out):
         dummy_dssat = DSSAT()
         dummy_dssat.close()
 
-    # Ensure necessary output directories exist
-    if os.path.exists(sim_dir):
-        shutil.rmtree(sim_dir)
-    os.makedirs(sim_dir, exist_ok=True)
+    # If it is a single run, stop here and avoid clutter
+    if not is_batch:
+        return None, None, None, None
+
+    # For batch runs, generate the full logging/archive hierarchy
+    base_name = os.path.basename(sim_dir)
+    log_dir = os.path.join(sim_dir, "logs")
+    archive_dir = os.path.join(sim_dir, f"{base_name}_ARCHIVE")
+    failed_log = os.path.join(sim_dir, f"{base_name}_Failed_Treatments.txt")
+    output_csv = os.path.join(sim_dir, f"{base_name}_Summary.csv")
+
     os.makedirs(log_dir, exist_ok=True)
     os.makedirs(archive_dir, exist_ok=True)
+        
+    return log_dir, archive_dir, failed_log, output_csv
 
-    # Clear the failed log file if it exists
-    if os.path.exists(failed_log):
-        os.remove(failed_log)
-
-# 1. Environment Setup
-def setup_dssat_environment(temp_dir, exe_name):
-    _version = re.search(r'\d+', exe_name).group()
-    data_dir = f"Data_{int(_version)}"
-
-    if os.path.exists(temp_dir):
-        shutil.rmtree(temp_dir, ignore_errors=True)
-    os.makedirs(temp_dir, exist_ok=True)
-
-    os.environ['TMP'] = temp_dir
-    os.environ['TEMP'] = temp_dir
-    tempfile.tempdir = temp_dir
-
-    os.environ['DSSAT_EXE'] = exe_name
-    os.environ['DSSAT_DATA'] = data_dir
-
-    _original_symlink = os.symlink
-    def symlink_patch(src, dst, target_is_directory=False, *, dir_fd=None):
-        try:
-            _original_symlink(src, dst, target_is_directory=target_is_directory, dir_fd=dir_fd)
-        except OSError:
-            if os.path.isdir(src):
-                shutil.copytree(src, dst, dirs_exist_ok=True)
-            else:
-                shutil.copy2(src, dst)
-    os.symlink = symlink_patch
-    warnings.filterwarnings('ignore', category=DeprecationWarning)
 
 # 2. Weather Processing
 def get_weather_ids_from_master(xlsx_path, sheet_name, id_column):
@@ -503,27 +493,27 @@ def run_worker(worker_id, treatments_chunk, pad_width, stdout_router, progress_b
     worker_tag = f"worker_{worker_id:0{worker_pad}d}"
     output_path = os.path.join(log_dir, f"{worker_tag}_output.txt")
     error_path = os.path.join(log_dir, f"{worker_tag}_errors.txt")
-    output_handle = open(output_path, "a", encoding="utf-8")
-    stdout_router.register(output_handle)  # from now on, this thread's prints go here
-
+    
     worker_results = {}
     worker_failures = {}
     worker_skipped = []
 
-    for row in treatments_chunk:
-        run_label, result, error = run_single_treatment(row, pad_width, sim_dir, wth_folder_path, treatments, stations, soils, crop_objects, fert_material, buffer_days)
-        if error == "SKIPPED":
-            worker_skipped.append(run_label)
-        elif error is None:
-            worker_results[run_label] = result
-        else:
-            worker_failures[run_label] = error
-            with open(error_path, "a", encoding="utf-8") as f:
-                f.write(f"{run_label}: {error}\n")
-        with progress_lock:
-            progress_bar.update(1)
+    with open(output_path, "a", encoding="utf-8") as output_handle:
+        stdout_router.register(output_handle)  # from now on, this thread's prints go here
 
-    output_handle.close()
+        for row in treatments_chunk:
+            run_label, result, error = run_single_treatment(row, pad_width, sim_dir, wth_folder_path, treatments, stations, soils, crop_objects, fert_material, buffer_days)
+            if error == "SKIPPED":
+                worker_skipped.append(run_label)
+            elif error is None:
+                worker_results[run_label] = result
+            else:
+                worker_failures[run_label] = error
+                with open(error_path, "a", encoding="utf-8") as f:
+                    f.write(f"{run_label}: {error}\n")
+            with progress_lock:
+                progress_bar.update(1)
+
     return worker_results, worker_failures, worker_skipped
 
 def parse_summary_out(filepath):
@@ -560,31 +550,14 @@ def load_treatment_cultivar_map(master_xlsx, master_sheet):
     master_df.columns = master_df.columns.str.strip()
     return dict(zip(master_df['treatment'].astype(int), master_df['cultivar']))
 
-def load_grid_map(grids_csv):
-    grids_df = pd.read_csv(grids_csv)
-    grids_df.columns = grids_df.columns.str.strip()
-    return grids_df.set_index('GCODE')[['LAT', 'LONG']].to_dict('index')
+def run_dssat(row, sim_dir, wth_folder, treatments, stations, soils, crops, pad_width=3, sdate_buffer=SDATE_BUFFER_DAYS, fert_material=FERT_MATERIAL):
+    prepare_workspace(sim_dir, is_batch=False)
+    return run_single_treatment(row, pad_width, sim_dir, wth_folder, treatments, stations, soils, crops, fert_material, sdate_buffer)
 
-#conversion
-def convert_parquet_to_csv(input_path, output_path, chunk_size=10000):
-    if not os.path.exists(input_path):
-        print(f"File not found: {input_path}")
-        return
-    
-    parquet_file = pq.ParquetFile(input_path)
-    total_rows = parquet_file.metadata.num_rows
-    total_chunks = (total_rows // chunk_size) + (1 if total_rows % chunk_size else 0)
-    
-    first_chunk = True
-    
-    with tqdm(total=total_chunks, desc="Converting to CSV") as pbar:
-        for batch in parquet_file.iter_batches(batch_size=chunk_size):
-            df = batch.to_pandas()
-            df.to_csv(output_path, mode='w' if first_chunk else 'a', index=False, header=first_chunk)
-            first_chunk = False
-            pbar.update(1)
+def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, stations, soils, crops, max_workers=8, batch_size=100, sdate_buffer=SDATE_BUFFER_DAYS, fert_material=FERT_MATERIAL, columns_to_keep=COLUMNS_TO_KEEP, summary_filename=SUMMARY_FILENAME):
+    # Automatically prepare directories and derive internal paths
+    log_dir, archive_dir, failed_log, output_csv = prepare_workspace(sim_dir,is_batch=True)
 
-def run_master_pipeline(xlsx_path, sheet_name, grids_csv, sim_dir, log_dir, archive_dir, output_csv, failed_log, summary_filename, wth_folder, max_workers, batch_size, sdate_buffer, fert_material, columns_to_keep, treatments, stations, soils, crops):
     # Consolidates batch chunking, parallel execution, extraction, and archiving
     master_df = pd.read_excel(xlsx_path, sheet_name=sheet_name)
     master_df.columns = master_df.columns.str.strip()
@@ -593,13 +566,8 @@ def run_master_pipeline(xlsx_path, sheet_name, grids_csv, sim_dir, log_dir, arch
     worker_pad = len(str(max_workers))
     
     cultivar_map = load_treatment_cultivar_map(xlsx_path, sheet_name)
-    grid_map = load_grid_map(grids_csv) if grids_csv and os.path.exists(grids_csv) else {}
     
-    # 1. State-Tracking: Scan existing archives for completed treatments
-    import glob
-    import zipfile
-    import re
-    
+    # 1. State-Tracking: Scan existing archives for completed treatments   
     completed_treatments = set()
     existing_zips = glob.glob(os.path.join(archive_dir, "Success_Batch_*.zip"))
     batch_offset = len(existing_zips)
@@ -678,9 +646,14 @@ def run_master_pipeline(xlsx_path, sheet_name, grids_csv, sim_dir, log_dir, arch
                         wsta_col = next((col for col in df.columns if "WSTA" in col.upper()), None)
                         if wsta_col is not None:
                             gcodes = df[wsta_col].astype(str).str[:4]
+                            
+                            # Create a mapping from the 4-character prefix to coordinates
+                            lat_map = {k[:4]: float(v["lat"]) for k, v in stations.items()}
+                            lon_map = {k[:4]: float(v["long"]) for k, v in stations.items()}
+                            
                             df.insert(2, "GCODE", gcodes)
-                            df.insert(3, "Latitude", gcodes.map(lambda g: grid_map.get(g, {}).get("LAT")))
-                            df.insert(4, "Longitude", gcodes.map(lambda g: grid_map.get(g, {}).get("LONG")))
+                            df.insert(3, "Latitude", gcodes.map(lambda g: lat_map.get(g)))
+                            df.insert(4, "Longitude", gcodes.map(lambda g: lon_map.get(g)))
                         else:
                             df.insert(2, "GCODE", None)
                             df.insert(3, "Latitude", None)
@@ -729,3 +702,37 @@ def run_master_pipeline(xlsx_path, sheet_name, grids_csv, sim_dir, log_dir, arch
     finally:
         sys.stdout = console_stdout
         progress_bar.close()
+
+def add_cultivar(cultivar_dict, crop_name):
+    # Fetch crop class dynamically
+    crop_class = getattr(crop, crop_name)
+    updated_cultivars = {}
+    
+    # Fetch fallback code directly from native CUL file to bypass instantiation errors
+    fallback_code = crop_class.cultivar_list()[0]
+    
+    for key, params in cultivar_dict.items():
+        # 1. ALWAYS instantiate with the native fallback code so it doesn't crash
+        crop_obj = crop_class(fallback_code)
+        
+        # 2. Overwrite the internal cultivar code with the user-defined code
+        user_code = params.get("code", fallback_code)
+        if hasattr(crop_obj, "_Crop__cultivar"):
+            crop_obj._Crop__cultivar._code = user_code
+        
+        # 3. Enforce default ecotype
+        eco_val = params.get("eco#", params.get("ECO#", "DFAULT"))
+        if hasattr(crop_obj['eco#'], '_code'):
+            crop_obj['eco#']._code = eco_val
+        else:
+            crop_obj['eco#'] = eco_val
+            
+        # 4. Dynamically map parameters, skipping initialization keys
+        for param_key, param_value in params.items():
+            param_lower = param_key.lower()
+            if param_lower not in ["code", "eco#"]:
+                crop_obj[param_lower] = param_value
+                
+        updated_cultivars[key] = crop_obj
+        
+    return updated_cultivars

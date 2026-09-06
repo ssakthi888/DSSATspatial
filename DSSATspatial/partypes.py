@@ -134,8 +134,8 @@ CODE_VARS["water"] = CODE_VARS["nitro"] = CODE_VARS["symbi"] = \
     CODE_VARS["caout"] = CODE_VARS["waout"] = CODE_VARS["niout"] =  \
     CODE_VARS["miout"] = CODE_VARS["diout"] = CODE_VARS["chout"] = \
     CODE_VARS["opout"] = CODE_VARS["switch"]
-CODE_VARS["iroff"] = CODE_VARS["ioff"] # TODO: These are exactly the same!
-CODE_VARS["imeth"] = CODE_VARS["iame"] # TODO: These are exactly the same!
+CODE_VARS["iroff"] = CODE_VARS["ioff"] 
+CODE_VARS["imeth"] = CODE_VARS["iame"]
 CODE_VARS["ncode"] = CODE_VARS["fmcd"]
 
 PROTECTED_ATTRS = [

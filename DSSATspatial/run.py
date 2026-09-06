@@ -92,7 +92,7 @@ class DSSAT:
             os.mkdir(run_path)
         if not os.path.exists(os.path.join(run_path, "Weather")):
             os.mkdir(os.path.join(run_path, "Weather"))
-        sys.stdout.write(f'{run_path} created.\n')
+        # sys.stdout.write(f'{run_path} created.\n')
         self.run_path = run_path
         self._output = {}
 
