@@ -290,15 +290,26 @@ def build_chemical_section(row, base_treatment):
 
 def build_sdate(row, buffer_days):
     planting_date = parse_planting_date(row['planting_date'])
-    schedule_str = row.get('Tillage_schedule', '')
-    tillage_events = parse_tillage_schedule(schedule_str)
     min_das = 0
-    if tillage_events:
-        min_das = min([das for das, timpl, tdep in tillage_events])
-    if min_das < 0:
-        sim_start = planting_date + timedelta(days=min_das - buffer_days)
-    else:
-        sim_start = planting_date - timedelta(days=buffer_days)
+    
+    # Check Tillage
+    t_events = parse_tillage_schedule(row.get('Tillage_schedule', ''))
+    if t_events:
+        min_das = min(min_das, min([das for das, timpl, tdep in t_events]))
+        
+    # Check Fertilizer
+    for col in ['N_application', 'P_application', 'K_application']:
+        f_events = parse_nutrient_schedule(row.get(col, ''))
+        if f_events:
+            min_das = min(min_das, min([das for das, kg in f_events]))
+            
+    # Check Irrigation
+    i_events = parse_irrigation_schedule(row.get('IRRIG_SCHEDULE', ''))
+    if i_events:
+        min_das = min(min_das, min([das for das, mm in i_events]))
+
+    # Calculate simulation start date accommodating the earliest event plus buffer
+    sim_start = planting_date + timedelta(days=min_das - buffer_days)
     yy = sim_start.year % 100
     doy = sim_start.timetuple().tm_yday
     return f"{yy:02d}{doy:03d}"
@@ -328,7 +339,8 @@ def parse_irrigation_schedule(schedule_str):
         pair = pair.strip()
         if not pair:
             continue
-        das_str, mm_str = pair.split('-')
+        # Use rsplit to safely handle negative DAS values like -1-17
+        das_str, mm_str = pair.rsplit('-', 1)
         events.append((int(das_str), float(mm_str)))
     return events
 
@@ -366,7 +378,8 @@ def parse_nutrient_schedule(schedule_str):
         pair = pair.strip()
         if not pair:
             continue
-        das_str, kg_str = pair.split('-')
+        # Use rsplit to safely handle negative DAS values like -1-17
+        das_str, kg_str = pair.rsplit('-', 1)
         events.append((int(das_str), float(kg_str)))
     return events
 

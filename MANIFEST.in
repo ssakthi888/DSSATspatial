@@ -1,3 +1,5 @@
 recursive-include DSSATspatial *
 global-exclude *.pyc
 global-exclude __pycache__
+prune notebook_demo
+prune sample_data
