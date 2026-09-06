@@ -8,20 +8,24 @@ import threading
 import warnings
 import inspect
 
-# 1. Dynamic Environment Setup via Caller's Globals
-# Peek into the notebook/script that is executing the import statement
-_caller_globals = inspect.currentframe().f_back.f_globals
+# 1. Dynamic Environment Setup via Stack Inspection
+_dssat_version = '4.8.5'
+_system_temp = os.path.join(tempfile.gettempdir(), "DSSAT_Batch_Temp")
+_custom_temp = _system_temp
 
-_dssat_version = _caller_globals.get('DSSAT_VERSION', '4.8.5')
+# Walk past Python's internal import machinery to find the notebook variables
+for frame_info in inspect.stack():
+    _globals = frame_info.frame.f_globals
+    if 'DSSAT_VERSION' in _globals or 'CUSTOM_TEMP' in _globals:
+        _dssat_version = _globals.get('DSSAT_VERSION', _dssat_version)
+        _custom_temp = _globals.get('CUSTOM_TEMP', _system_temp)
+        break
+
 _clean_version = _dssat_version.replace('.', '')
-
 os.environ['DSSAT_EXE'] = f"dscsm0{_clean_version}.exe"
 os.environ['DSSAT_DATA'] = f"Data_{_clean_version}"
 
-# 2. Configure Temp Directory Dynamically
-_system_temp = os.path.join(tempfile.gettempdir(), "DSSAT_Batch_Temp")
-_custom_temp = _caller_globals.get('CUSTOM_TEMP', _system_temp)
-
+# 2. Configure Temp Directory
 if os.path.exists(_custom_temp):
     shutil.rmtree(_custom_temp, ignore_errors=True)
 os.makedirs(_custom_temp, exist_ok=True)

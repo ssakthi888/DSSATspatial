@@ -208,13 +208,16 @@ class DSSAT:
 
         # Run the model
         exc_args = [BIN_PATH, 'C', os.path.basename(filex_name), '1']
-        excinfo = subprocess.run(exc_args, 
-            cwd=self.run_path, capture_output=True, text=True,
+        excinfo = subprocess.run(
+            exc_args, 
+            cwd=self.run_path, 
+            stdout=subprocess.DEVNULL, 
+            stderr=subprocess.DEVNULL,
             env={"DSSAT_HOME": DSSAT_HOME, }
         )
-        excinfo.stdout = re.sub("\n{2,}", "\n", excinfo.stdout)
-        excinfo.stdout = re.sub("\n$", "", excinfo.stdout)
-        self.stdout = excinfo.stdout.strip()
+
+        # Bypass string processing and set stdout to an empty string
+        self.stdout = ""
 
         if verbose:
             for line in excinfo.stdout.split("\n"):

@@ -1,5 +1,6 @@
 import os
 import sys
+import glob
 import shutil
 import re
 import warnings
@@ -550,9 +551,34 @@ def load_treatment_cultivar_map(master_xlsx, master_sheet):
     master_df.columns = master_df.columns.str.strip()
     return dict(zip(master_df['treatment'].astype(int), master_df['cultivar']))
 
-def run_dssat(row, sim_dir, wth_folder, treatments, stations, soils, crops, pad_width=3, sdate_buffer=SDATE_BUFFER_DAYS, fert_material=FERT_MATERIAL):
+def run_dssat(row_number, xlsx_path, sheet_name, sim_dir, wth_folder, treatments, stations, soils, crops, sdate_buffer=SDATE_BUFFER_DAYS, fert_material=FERT_MATERIAL): 
+   
+    # 1. Load the master dataframe
+    df = pd.read_excel(xlsx_path, sheet_name=sheet_name)
+    
+    # 2. Automatically calculate pad_width based on max treatment number
+    pad_width = len(str(int(df['treatment'].max())))
+    
+    # 3. Convert user's 1-based row number to 0-based pandas index
+    if row_number < 1 or row_number > len(df):
+        raise ValueError(f"Row number {row_number} is out of bounds. Must be between 1 and {len(df)}.")
+    
+    row_index = row_number - 1
+    row = df.iloc[row_index]
+    
+    # 4. Execute the simulation
     prepare_workspace(sim_dir, is_batch=False)
-    return run_single_treatment(row, pad_width, sim_dir, wth_folder, treatments, stations, soils, crops, fert_material, sdate_buffer)
+    
+    # Wrapper to suppress console prints strictly for this execution
+    original_stdout = sys.stdout
+    with open(os.devnull, 'w') as devnull:
+        sys.stdout = devnull
+        try:
+            result = run_single_treatment(row, pad_width, sim_dir, wth_folder, treatments, stations, soils, crops, fert_material, sdate_buffer)
+        finally:
+            sys.stdout = original_stdout
+            
+    return result
 
 def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, stations, soils, crops, max_workers=8, batch_size=100, sdate_buffer=SDATE_BUFFER_DAYS, fert_material=FERT_MATERIAL, columns_to_keep=COLUMNS_TO_KEEP, summary_filename=SUMMARY_FILENAME):
     # Automatically prepare directories and derive internal paths
@@ -567,7 +593,8 @@ def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, st
     
     cultivar_map = load_treatment_cultivar_map(xlsx_path, sheet_name)
     
-    # 1. State-Tracking: Scan existing archives for completed treatments   
+    # 1. State-Tracking: Scan existing archives for completed treatments  
+    import glob # Force the import directly in the local scope 
     completed_treatments = set()
     existing_zips = glob.glob(os.path.join(archive_dir, "Success_Batch_*.zip"))
     batch_offset = len(existing_zips)
