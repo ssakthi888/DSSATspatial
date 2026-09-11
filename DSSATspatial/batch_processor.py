@@ -1,7 +1,3 @@
-#batch_processor.py
-#created and modified by sakthivel sivakumar
-
-#import libraries
 import os
 import sys
 import glob
@@ -18,7 +14,7 @@ from tqdm import tqdm
 import zipfile
 
 # Import base DSSAT classes
-from . import filex, ProcessWth, SoilProfile, crop
+from . import filex, WeatherStation, SoilProfile, crop
 from contextlib import redirect_stdout
 from . import partypes
 from .run import DSSAT
@@ -80,7 +76,7 @@ def get_wth_files_for_ids(folder_path, weather_ids):
 
 def load_single_station(wth_path):
     station_name = os.path.splitext(os.path.basename(wth_path))[0]
-    station = ProcessWth.from_files([wth_path])
+    station = WeatherStation.from_files([wth_path])
     return station_name, station
 
 def load_weather_stations_parallel(wth_files, max_workers):
@@ -131,23 +127,64 @@ def index_soil_blocks(sol_path):
 
     return header_lines, blocks
 
+def write_temp_soil_file(header_lines, blocks, ids, temp_path):
+    found, missing = [], []
+    with open(temp_path, "w") as f:
+        f.writelines(header_lines)
+        for soil_id in ids:
+            if soil_id in blocks:
+                f.writelines(blocks[soil_id])
+                found.append(soil_id)
+            else:
+                missing.append(soil_id)
+    return found, missing
+
+def load_single_soil(soil_id, sol_path):
+    try:
+        soil_obj = SoilProfile.from_file(soil_id, sol_path)
+        return soil_id, soil_obj, None
+    except Exception as e:
+        return soil_id, None, e
+
+def initialize_all_soils(sol_path, ids, stop_on_error=False, max_workers=4, show_sample_errors=5):
+    # print(f"Loading {len(ids)} soil profiles from {os.path.basename(sol_path)}")
+    soils = {}
+    errors = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(load_single_soil, soil_id, sol_path): soil_id for soil_id in ids}
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Loading soil profiles"):
+            soil_id, soil_obj, error = future.result()
+            if error is not None:
+                errors.append((soil_id, error))
+                if stop_on_error:
+                    raise error
+            else:
+                soils[soil_id] = soil_obj
+
+    failed = [soil_id for soil_id, _ in errors]
+    # print(f"\nDone. {len(soils)} loaded, {len(failed)} failed.")
+    if errors:
+        print(f"\nSample errors (showing up to {show_sample_errors}):")
+        for soil_id, error in errors[:show_sample_errors]:
+            print(f"  {soil_id}: {type(error).__name__}: {error}")
+    return soils, failed
+
 def run_batch_soil_load(master_xlsx_path, master_sheet_name, master_id_column, sol_file_path, max_workers=4):
     ids = get_soil_ids(master_xlsx_path, master_sheet_name, master_id_column)
-    _, blocks = index_soil_blocks(sol_file_path)
+    header_lines, blocks = index_soil_blocks(sol_file_path)
 
-    soils = {}
-    missing = []
-    
-    # Since instantiation is now instantaneous text caching, we bypass threading overhead
-    for soil_id in tqdm(ids, desc="Loading soil profiles"):
-        if soil_id in blocks:
-            # Pass the raw text block directly into the lightweight SoilProfile class
-            soils[soil_id] = SoilProfile(blocks[soil_id])
-        else:
-            missing.append(soil_id)
-            
-    if missing:
-        print(f"Warning: {len(missing)} IDs not found in master .SOL:", missing)
+    temp_fd, temp_sol_path = tempfile.mkstemp(suffix=".SOL", prefix="soil_subset_")
+    os.close(temp_fd)
+
+    try:
+        found, missing = write_temp_soil_file(header_lines, blocks, ids, temp_sol_path)
+        if missing:
+            print(f"{len(missing)} IDs not found in master .SOL:", missing)
+
+        soils, failed = initialize_all_soils(sol_path=temp_sol_path, ids=found, stop_on_error=False, max_workers=max_workers)
+    finally:
+        if os.path.exists(temp_sol_path):
+            os.remove(temp_sol_path)
 
     return soils
 
@@ -451,9 +488,8 @@ def run_single_treatment(row, pad_width, sim_dir, wth_folder_path, treatments, s
         run_kwargs = build_run_kwargs(row, weather_code, soil_code, cultivar_key, treatments, stations, soils, crop_objects, fert_material, buffer_days)
         dssat = DSSAT(sim_folder)
 
-        # Inject the master weather directory path into the execution arguments
-        run_kwargs['wth_dir'] = wth_folder_path
-
+        wth_source = os.path.join(wth_folder_path, f"{weather_code}.WTH")
+        shutil.copy(wth_source, sim_folder)
         results = dssat.run_treatment(**run_kwargs)
         return run_label, results, None
     except Exception as e:
