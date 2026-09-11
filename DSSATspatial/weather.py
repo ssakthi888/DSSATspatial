@@ -7,7 +7,7 @@ from .partypes import (
     NumberType, Record, DescriptionType, parse_pars_line
 )
 
-class WeatherStation(Record):
+class ProcessWth(Record):
     dtypes = {
         "insi": DescriptionType, 'lat': NumberType, 'long': NumberType, 
         'elev': NumberType, 'tav': NumberType, 'amp': NumberType,  

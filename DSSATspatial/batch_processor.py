@@ -18,7 +18,7 @@ from tqdm import tqdm
 import zipfile
 
 # Import base DSSAT classes
-from . import filex, WeatherStation, SoilProfile, crop
+from . import filex, ProcessWth, SoilProfile, crop
 from contextlib import redirect_stdout
 from . import partypes
 from .run import DSSAT
@@ -80,7 +80,7 @@ def get_wth_files_for_ids(folder_path, weather_ids):
 
 def load_single_station(wth_path):
     station_name = os.path.splitext(os.path.basename(wth_path))[0]
-    station = WeatherStation.from_files([wth_path])
+    station = ProcessWth.from_files([wth_path])
     return station_name, station
 
 def load_weather_stations_parallel(wth_files, max_workers):
