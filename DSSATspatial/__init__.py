@@ -56,7 +56,7 @@ VERSION = '048'
 
 from . import crop
 from .soil import SoilProfile, SoilLayer
-from .weather import WeatherStation, WeatherRecord
+from .weather import WeatherStation
 from .run import DSSAT, BIN_PATH, STATIC_PATH
 from . import filex
 from .batch_processor import *
