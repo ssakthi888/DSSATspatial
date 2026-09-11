@@ -1,3 +1,7 @@
+#batch_processor.py
+#created and modified by sakthivel sivakumar
+
+#import libraries
 import os
 import sys
 import glob
@@ -488,8 +492,9 @@ def run_single_treatment(row, pad_width, sim_dir, wth_folder_path, treatments, s
         run_kwargs = build_run_kwargs(row, weather_code, soil_code, cultivar_key, treatments, stations, soils, crop_objects, fert_material, buffer_days)
         dssat = DSSAT(sim_folder)
 
-        wth_source = os.path.join(wth_folder_path, f"{weather_code}.WTH")
-        shutil.copy(wth_source, sim_folder)
+        # Inject the master weather directory path into the execution arguments
+        run_kwargs['wth_dir'] = wth_folder_path
+
         results = dssat.run_treatment(**run_kwargs)
         return run_label, results, None
     except Exception as e:
