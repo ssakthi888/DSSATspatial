@@ -2,11 +2,14 @@
 #created and modified by sakthivel sivakumar
 
 import os
+from .partypes import Record
 
 DSSAT_MODULE_PATH = os.path.dirname(__file__)
 
-class SoilProfile:
+class SoilProfile(Record):
     def __init__(self, raw_lines: list[str]):
+
+        super().__init__()
         self.raw_lines = raw_lines
         self.sldp = 0.0
         
