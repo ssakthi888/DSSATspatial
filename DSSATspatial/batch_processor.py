@@ -551,8 +551,10 @@ def parse_summary_out(filepath):
 
 def extract_treatment_number(folder_name):
     # Folder name is like "T_001" -> extract the numeric part -> 1
-    match = re.search(r"(\d+)", folder_name)
-    return int(match.group(1)) if match else None
+    try:
+        return int(folder_name.split('_')[1])
+    except (IndexError, ValueError):
+        return None
 
 def load_treatment_cultivar_map(master_xlsx, master_sheet):
     master_df = pd.read_excel(master_xlsx, sheet_name=master_sheet)
@@ -607,11 +609,12 @@ def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, st
     existing_zips = glob.glob(os.path.join(archive_dir, "Success_Batch_*.zip"))
     batch_offset = len(existing_zips)
     
+    trt_pattern = re.compile(r'T_(\d+)/')
     for zip_path in existing_zips:
         try:
             with zipfile.ZipFile(zip_path, 'r') as z:
                 for name in z.namelist():
-                    match = re.search(r'T_(\d+)/', name)
+                    match = trt_pattern.search(name)
                     if match:
                         completed_treatments.add(int(match.group(1)))
         except zipfile.BadZipFile:
