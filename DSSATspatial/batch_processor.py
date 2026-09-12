@@ -87,7 +87,7 @@ def load_weather_stations_parallel(wth_files, max_workers):
     stations = {}
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(load_single_station, path): path for path in wth_files}
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Loading weather stations"):
+        for future in as_completed(futures):
             station_name, station = future.result()
             stations[station_name] = station
     return stations
@@ -150,7 +150,7 @@ def initialize_all_soils_in_memory(ids, header_lines, blocks, stop_on_error=Fals
             else:
                 errors.append((soil_id, ValueError(f"Soil ID {soil_id} not found in master .SOL")))
                 
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Loading soil profiles"):
+        for future in as_completed(futures):
             soil_id, soil_obj, error = future.result()
             if error is not None:
                 errors.append((soil_id, error))

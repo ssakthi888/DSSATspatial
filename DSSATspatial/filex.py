@@ -1071,9 +1071,10 @@ def create_filex(field:Field, cultivar:Cultivar, planting:Planting,
                 fertilizer:Fertilizer=None, soil_analysis:SoilAnalysis=None, 
                 irrigation:Irrigation=None, residue:Residue=None, 
                 chemical:Chemical=None, tillage:Tillage=None):
+    
     experiment_name = field["id_field"][:4] +\
         simulation_controls["general"]["sdate"].strftime('%y01') + cultivar.code
-    out_str = f"*EXP.DETAILS: {experiment_name}\n\n"
+    
     treatment = Treatment(**{
         "r": 1, "o": 0, "c": 0, "tname": "DSSATspatial", "cu": 1, "fl": 1, 
         "mp": 1, 'sm': 1, 'me': 0,
@@ -1086,20 +1087,28 @@ def create_filex(field:Field, cultivar:Cultivar, planting:Planting,
         'mt': 1 if tillage else 0,
         'mh': 1 if harvest else 0
     })
-    out_str += treatment._write_section() + "\n"
-    out_str += cultivar._write_section() + "\n"
-    out_str += field._write_section() + "\n"
-    out_str += planting._write_section() + "\n"
-    if soil_analysis: out_str += soil_analysis._write_section() + "\n"
-    if initial_conditions: out_str += initial_conditions._write_section() + "\n"
-    if irrigation: out_str += irrigation._write_section() + "\n"
-    if fertilizer: out_str += fertilizer._write_section() + "\n"
-    if residue: out_str += residue._write_section() + "\n"
-    if chemical: out_str += chemical._write_section() + "\n"
-    if tillage: out_str += tillage._write_section() + "\n"
-    if harvest: out_str += harvest._write_section() + "\n"
-    out_str += simulation_controls._write_section()
+    
+    # Aggregate string components sequentially into a list
+    file_blocks = [
+        f"*EXP.DETAILS: {experiment_name}\n\n",
+        treatment._write_section() + "\n",
+        cultivar._write_section() + "\n",
+        field._write_section() + "\n",
+        planting._write_section() + "\n"
+    ]
+    
+    if soil_analysis: file_blocks.append(soil_analysis._write_section() + "\n")
+    if initial_conditions: file_blocks.append(initial_conditions._write_section() + "\n")
+    if irrigation: file_blocks.append(irrigation._write_section() + "\n")
+    if fertilizer: file_blocks.append(fertilizer._write_section() + "\n")
+    if residue: file_blocks.append(residue._write_section() + "\n")
+    if chemical: file_blocks.append(chemical._write_section() + "\n")
+    if tillage: file_blocks.append(tillage._write_section() + "\n")
+    if harvest: file_blocks.append(harvest._write_section() + "\n")
+    
+    file_blocks.append(simulation_controls._write_section())
 
-    return out_str
+    # Compile final payload in a single memory allocation
+    return "".join(file_blocks)
     
     
