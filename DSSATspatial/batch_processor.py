@@ -1,3 +1,7 @@
+#batch_processor.py
+#created and modified by sakthivel sivakumar
+
+#import libraries
 import os
 import sys
 import glob
@@ -14,7 +18,7 @@ from tqdm import tqdm
 import zipfile
 
 # Import base DSSAT classes
-from . import filex, WeatherStation, SoilProfile, crop
+from . import filex, ProcessWTH, SoilProfile, crop
 from contextlib import redirect_stdout
 from . import partypes
 from .run import DSSAT
@@ -76,7 +80,7 @@ def get_wth_files_for_ids(folder_path, weather_ids):
 
 def load_single_station(wth_path):
     station_name = os.path.splitext(os.path.basename(wth_path))[0]
-    station = WeatherStation.from_files([wth_path])
+    station = ProcessWTH.from_files([wth_path])
     return station_name, station
 
 def load_weather_stations_parallel(wth_files, max_workers):
@@ -247,7 +251,7 @@ def parse_planting_date(date_val):
     
 def parse_tillage_schedule(schedule_str):
     events = []
-    if pd.isna(schedule_str) or not str(schedule_str).strip():
+    if pd.isna(schedule_str) or str(schedule_str).strip().lower() in ['', 'nan']:
         return events
     # Format: DAS,TIMPL,TDEP (e.g., "-40,TI007,10; -25,TI014,5")
     for item in str(schedule_str).split(';'):
@@ -335,6 +339,8 @@ def build_planting(row):
 
 def parse_irrigation_schedule(schedule_str):
     events = []
+    if pd.isna(schedule_str) or str(schedule_str).strip().lower() in ['', 'nan']:
+        return events
     for pair in str(schedule_str).split(';'):
         pair = pair.strip()
         if not pair:
@@ -346,7 +352,7 @@ def parse_irrigation_schedule(schedule_str):
 
 def build_irrigation_section(row):
     schedule_str = row.get('IRRIG_SCHEDULE', '')
-    if pd.isna(schedule_str) or not str(schedule_str).strip():
+    if pd.isna(schedule_str) or str(schedule_str).strip().lower() in ['', 'nan']:
         return None
     planting_date = parse_planting_date(row['planting_date'])
     irrigation_events = [
@@ -372,7 +378,7 @@ def apply_irrigation_mode(row, simulation_controls):
 
 def parse_nutrient_schedule(schedule_str):
     events = []
-    if pd.isna(schedule_str) or not str(schedule_str).strip():
+    if pd.isna(schedule_str) or str(schedule_str).strip().lower() in ['', 'nan']:
         return events
     for pair in str(schedule_str).split(';'):
         pair = pair.strip()
@@ -488,8 +494,9 @@ def run_single_treatment(row, pad_width, sim_dir, wth_folder_path, treatments, s
         run_kwargs = build_run_kwargs(row, weather_code, soil_code, cultivar_key, treatments, stations, soils, crop_objects, fert_material, buffer_days)
         dssat = DSSAT(sim_folder)
 
-        wth_source = os.path.join(wth_folder_path, f"{weather_code}.WTH")
-        shutil.copy(wth_source, sim_folder)
+        # Inject the master weather directory path into the execution arguments
+        run_kwargs['wth_dir'] = wth_folder_path
+
         results = dssat.run_treatment(**run_kwargs)
         return run_label, results, None
     except Exception as e:
