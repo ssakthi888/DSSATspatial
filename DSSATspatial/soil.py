@@ -1,34 +1,80 @@
-#soil.py
-#created and modified by sakthivel sivakumar
-
-#import libraries
 import os
-from .partypes import (
-    NumberType, DescriptionType, Record,
-    CodeType, parse_pars_line
-)
+import sys
+from rosetta import rosetta, SoilData
+from .partypes import NumberType, DescriptionType, Record, CodeType
 
 DSSAT_MODULE_PATH = os.path.dirname(__file__)
 
-SURF_PARS_1 = [
-    "name", "soil_data_source", "soil_clasification", "soil_depth", 
-    "soil_series_name"
-]
+SURF_PARS_1 = ["name", "soil_data_source", "soil_clasification", "soil_depth", "soil_series_name"]
 SURF_PARS_2 = ['site', 'country', 'lat', 'long', 'scs_family']
-SURF_PARS_3 = [
-    'scom', 'salb', 'slu1', 'sldr', 'slro', 'slnf', 'slpf', 'smhb', 
-    'smpx', 'smke'
-]
-PROF_PARS_1 = [
-    'slb', 'slmh', 'slll', 'sdul', 'ssat', 'srgf', 'ssks', 'sbdm', 'sloc', 
-    'slcl', 'slsi', 'slcf', 'slni', 'slhw', 'slhb', 'scec', 'sadc'
-]
-PROF_PARS_2 = [
-    'slb', 'slpx', 'slpt', 'slpo', 'caco3', 'slal', 'slfe', 'slmn', 'slbs', 
-    'slpa', 'slpb', 'slke', 'slmg', 'slna', 'slsu', 'slec', 'slca'
-]
+SURF_PARS_3 = ['scom', 'salb', 'slu1', 'sldr', 'slro', 'slnf', 'slpf', 'smhb', 'smpx', 'smke']
+PROF_PARS_1 = ['slb', 'slmh', 'slll', 'sdul', 'ssat', 'srgf', 'ssks', 'sbdm', 'sloc', 'slcl', 'slsi', 'slcf', 'slni', 'slhw', 'slhb', 'scec', 'sadc']
+PROF_PARS_2 = ['slb', 'slpx', 'slpt', 'slpo', 'caco3', 'slal', 'slfe', 'slmn', 'slbs', 'slpa', 'slpb', 'slke', 'slmg', 'slna', 'slsu', 'slec', 'slca']
 
-class SoilProfile(Record):  # Downgraded from TabularRecord to bypass strict object typing
+pars_fmt = {
+    'name': '<11', 'soil_data_source': '<11', 'soil_clasification': '<6',
+    'soil_depth': '>4.0f', 'soil_series_name': '<64', 'site': '<11',
+    'country': '<11', 'lat': '>8.3f', 'long': '>8.3f', 'scs_family': '<64',
+    'scom': '>5', 'salb': '>5.2f', 'slu1': '>5.1f', 'sldr': '>5.2f',
+    'slro': '>5.0f', 'slnf': '>5.2f', 'slpf': '>5.2f', 'smhb': '>5',
+    'smpx': '>5', 'smke': '>5',
+    'slb': '>5.0f', 'slmh': '<5', 'slll': '>5.3f', 'sdul': '>5.3f',
+    'ssat': '>5.3f', 'srgf': '>5.3f', 'ssks': '>5.2f', 'sbdm': '>5.2f',
+    'sloc': '>5.2f', 'slcl': '>5.1f', 'slsi': '>5.1f', 'slcf': '>5.1f',
+    'slni': '>5.3f', 'slhw': '>5.1f', 'slhb': '>5.1f', 'scec': '>5.1f',
+    'sadc': '>5.1f',
+    'slpx': '>5.1f', 'slpt': '>5.1f', 'slpo': '>5.1f', 'caco3': '>5.2f',
+    'slal': '>5.2f', 'slfe': '>5.2f', 'slmn': '>5.2f', 'slbs': '>5.2f',
+    'slpa': '>5.2f', 'slpb': '>5.2f', 'slke': '>5.2f', 'slmg': '>5.2f',
+    'slna': '>5.2f', 'slsu': '>5.2f', 'slec': '>5.2f', 'slca': '>5.2f'
+}
+
+def format_val(val, fmt):
+    if val is None or val == "-99" or val == -99 or str(val).strip() == "":
+        width = int(fmt[1:].split('.')[0])
+        return format(-99, f'>{width}.0f')[:width]
+    
+    fmt_core = fmt[1:]
+    width = int(fmt_core.split('.')[0])
+    
+    if 'f' in fmt_core:
+        try:
+            return format(float(val), fmt_core)[:width]
+        except ValueError:
+            return format(-99, f'>{width}.0f')[:width]
+    else:
+        if fmt[0] == '<':
+            return f"{str(val):<{width}}"[:width]
+        else:
+            return f"{str(val):>{width}}"[:width]
+
+def van_genuchten(theta_r, theta_s, alpha, n, h):
+    alpha = 10**alpha 
+    n = 10**n
+    m = 1 - 1/n 
+    theta = theta_r + (theta_s - theta_r)/(1 + abs(alpha * h)**n)**m
+    return theta
+
+def estimate_from_texture(slcl, slsi, sbdm=None, sloc=None):
+    if sbdm and sbdm != "-99":
+        soil_data = SoilData.from_array([[100 - float(slcl) - float(slsi), float(slsi), float(slcl), float(sbdm)]])
+        vangenuchten_pars, _, _ = rosetta(3, soil_data)
+    else:
+        soil_data = SoilData.from_array([[100 - float(slcl) - float(slsi), float(slsi), float(slcl)]])
+        vangenuchten_pars, _, _ = rosetta(2, soil_data)
+        
+    vangenuchten_pars = vangenuchten_pars[0]
+    ssat = vangenuchten_pars[1]
+    ssks = (10**vangenuchten_pars[-1]) / 24
+    slll = van_genuchten(*vangenuchten_pars[:-1], h=1500)
+    sdul = van_genuchten(*vangenuchten_pars[:-1], h=33)
+    
+    if (not sbdm or sbdm == "-99") and sloc and sloc != "-99":
+        sbdm = 1.386 - 0.078 * float(sloc) + 0.001 * float(slsi) + 0.001 * float(slcl)
+        
+    return {"ssat": ssat, "ssks": ssks, "slll": slll, "sdul": sdul, "sbdm": sbdm}
+
+class SoilProfile(Record):
     prefix = None
     dtypes = {
         'name': DescriptionType, 'soil_data_source': DescriptionType, 
@@ -40,25 +86,14 @@ class SoilProfile(Record):  # Downgraded from TabularRecord to bypass strict obj
         'slnf': NumberType, 'slpf': NumberType, 'smhb': CodeType, 
         'smpx': CodeType, 'smke': CodeType
     }
-    pars_fmt = {
-        'name': '<11', 'soil_data_source': "<11", 'soil_clasification': '<6', 
-        'soil_depth': '>4.0f', 'soil_series_name': '<64', 'site': '<11', 
-        'country': '<11', 'lat': '>8.3f', 'long': '>8.3f', 'scs_family': '<64', 
-        'scom': '>5', 'salb': '>5.2f', 'slu1': '>5.1f', 'sldr': '>5.2f', 
-        'slro': '>5.0f', 'slnf': '>5.2f', 'slpf': '>5.2f', 'smhb': '>5', 
-        'smpx': '>5', 'smke': '>5'
-    }
 
     def __init__(self, raw_block: str, max_depth: float, **kwargs):
         super().__init__()
         for name, value in kwargs.items():
             self.__setitem__(name, value)
         
-        # MOCK TABLE: Satisfies filex.py depth query (value.table[-1]["slb"])
         self.table = [{"slb": max_depth}]
         self["soil_depth"] = max_depth
-        
-        # Cache raw string block for immediate dumping
         self.raw_block = raw_block
 
     def __setitem__(self, key, value):
@@ -67,7 +102,6 @@ class SoilProfile(Record):  # Downgraded from TabularRecord to bypass strict obj
         super().__setitem__(key, value)
     
     def _write_sol(self):
-        # Override to dump the raw text directly into the simulation folder
         return self.raw_block
     
     @property
@@ -76,45 +110,94 @@ class SoilProfile(Record):  # Downgraded from TabularRecord to bypass strict obj
 
     @classmethod
     def from_block(cls, soil_id, header_lines, block_lines):
-        kwargs = {}
+        kwargs = {'name': soil_id}
         valid_lines = [line for line in block_lines if line.strip() and not line.startswith('!') and not line.startswith('@')]
         
-        if len(valid_lines) >= 3:
-            kwargs.update(parse_pars_line(valid_lines[0][1:], {par: cls.pars_fmt[par] for par in SURF_PARS_1}))
-            if "soil_depth" in kwargs:
-                del kwargs["soil_depth"]
-            kwargs.update(parse_pars_line(valid_lines[1][1:], {par: cls.pars_fmt[par] for par in SURF_PARS_2}))
-            kwargs.update(parse_pars_line(valid_lines[2][1:], {par: cls.pars_fmt[par] for par in SURF_PARS_3}))
+        formatted_lines = ["*SOILS: General DSSAT Soil Input File\n\n"]
+        formatted_lines.append(block_lines[0]) 
         
-        # Extract max depth (SLB) from the final layer in the Tier 1 array
-        max_depth = 0.0
-        layer_lines = []
-        parsing_layers = False
+        formatted_lines.append("@SITE        COUNTRY          LAT     LONG SCS FAMILY\n")
+        formatted_lines.append(valid_lines[1] + ("\n" if not valid_lines[1].endswith("\n") else ""))
+        
+        scom_tokens = valid_lines[2].strip().split()
+        scom_dict = {par: (scom_tokens[i] if i < len(scom_tokens) else "-99") for i, par in enumerate(SURF_PARS_3)}
+        
+        formatted_lines.append("@ SCOM  SALB  SLU1  SLDR  SLRO  SLNF  SLPF  SMHB  SMPX  SMKE\n")
+        scom_str = " " + " ".join([format_val(scom_dict[par], pars_fmt[par]) for par in SURF_PARS_3]) + "\n"
+        formatted_lines.append(scom_str)
+        
+        formatted_lines.append("@  SLB  SLMH  SLLL  SDUL  SSAT  SRGF  SSKS  SBDM  SLOC  SLCL  SLSI  SLCF  SLNI  SLHW  SLHB  SCEC  SADC\n")
+        
+        tier1_lines = []
+        tier2_lines = []
+        parsing_tier1 = False
+        parsing_tier2 = False
         
         for line in block_lines:
             if '@  SLB  SLMH' in line:
-                parsing_layers = True
+                parsing_tier1 = True
+                parsing_tier2 = False
                 continue
-            if parsing_layers:
-                if line.startswith('@'):
-                    break
-                if line.strip() and not line.startswith('!'):
-                    layer_lines.append(line)
-                    
-        if layer_lines:
+            if '@  SLB  SLPX' in line:
+                parsing_tier1 = False
+                parsing_tier2 = True
+                continue
+            if line.startswith('@'):
+                parsing_tier1 = False
+                parsing_tier2 = False
+                continue
+                
+            if line.strip() and not line.startswith('!'):
+                if parsing_tier1:
+                    tier1_lines.append(line)
+                elif parsing_tier2:
+                    tier2_lines.append(line)
+        
+        max_depth = 0.0
+        
+        for layer in tier1_lines:
+            tokens = layer.strip().split()
+            layer_dict = {par: (tokens[i] if i < len(tokens) else "-99") for i, par in enumerate(PROF_PARS_1)}
+            
             try:
-                # Target the first 6 characters of the line to extract the SLB float
-                max_depth = float(layer_lines[-1][:6].strip())
+                max_depth = max(max_depth, float(layer_dict['slb']))
             except ValueError:
                 pass
-                
-        # Reconstruct exactly what DSSAT expects to read natively
-        raw_string = "*SOILS: General DSSAT Soil Input File\n\n" + "".join(block_lines)
+            
+            missing_hydro = layer_dict['slll'] == "-99" or layer_dict['sdul'] == "-99" or layer_dict['ssat'] == "-99"
+            valid_texture = layer_dict['slcl'] != "-99" and layer_dict['slsi'] != "-99"
+            
+            if missing_hydro and valid_texture:
+                estimates = estimate_from_texture(
+                    slcl=layer_dict['slcl'], 
+                    slsi=layer_dict['slsi'], 
+                    sbdm=layer_dict['sbdm'], 
+                    sloc=layer_dict['sloc']
+                )
+                for key, val in estimates.items():
+                    if val is not None:
+                        layer_dict[key] = val
+
+            layer_str = " " + " ".join([format_val(layer_dict[par], pars_fmt[par]) for par in PROF_PARS_1]) + "\n"
+            formatted_lines.append(layer_str)
+            
+        if tier2_lines:
+            formatted_lines.append("@  SLB  SLPX  SLPT  SLPO CACO3  SLAL  SLFE  SLMN  SLBS  SLPA  SLPB  SLKE  SLMG  SLNA  SLSU  SLEC  SLCA\n")
+            for layer in tier2_lines:
+                tokens = layer.strip().split()
+                layer_dict = {par: (tokens[i] if i < len(tokens) else "-99") for i, par in enumerate(PROF_PARS_2)}
+                layer_str = " " + " ".join([format_val(layer_dict[par], pars_fmt[par]) for par in PROF_PARS_2]) + "\n"
+                formatted_lines.append(layer_str)
         
+        raw_string = "".join(formatted_lines)
         return cls(raw_string, max_depth, **kwargs)
 
     @classmethod
     def from_file(cls, profile: str, file: str):
+        if not os.path.exists(file):
+            print(f"Error: The original primary source data file '{file}' cannot be accessed.")
+            sys.exit(1)
+            
         with open(file, "r") as f:
             lines = f.readlines()
             
@@ -130,6 +213,7 @@ class SoilProfile(Record):  # Downgraded from TabularRecord to bypass strict obj
                 block_lines.append(line)
                 
         if not block_lines:
-            raise ValueError(f"{profile} profile not in {file} file")
+            print(f"Error: {profile} profile not in {file} file")
+            sys.exit(1)
             
         return cls.from_block(profile, [], block_lines)
