@@ -1,3 +1,7 @@
+#batch_processor.py
+#created and modified by sakthivel sivakumar
+
+#import libraries
 import os
 import sys
 import glob
@@ -14,7 +18,7 @@ from tqdm import tqdm
 import zipfile
 
 # Import base DSSAT classes
-from . import filex, WeatherStation, SoilProfile, crop
+from . import filex, ProcessWTH, SoilProfile, crop
 from contextlib import redirect_stdout
 from . import partypes
 from .run import DSSAT
@@ -76,14 +80,14 @@ def get_wth_files_for_ids(folder_path, weather_ids):
 
 def load_single_station(wth_path):
     station_name = os.path.splitext(os.path.basename(wth_path))[0]
-    station = WeatherStation.from_files([wth_path])
+    station = ProcessWTH.from_files([wth_path])
     return station_name, station
 
 def load_weather_stations_parallel(wth_files, max_workers):
     stations = {}
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(load_single_station, path): path for path in wth_files}
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Loading weather stations"):
+        for future in as_completed(futures):
             station_name, station = future.result()
             stations[station_name] = station
     return stations
@@ -127,32 +131,26 @@ def index_soil_blocks(sol_path):
 
     return header_lines, blocks
 
-def write_temp_soil_file(header_lines, blocks, ids, temp_path):
-    found, missing = [], []
-    with open(temp_path, "w") as f:
-        f.writelines(header_lines)
-        for soil_id in ids:
-            if soil_id in blocks:
-                f.writelines(blocks[soil_id])
-                found.append(soil_id)
-            else:
-                missing.append(soil_id)
-    return found, missing
-
-def load_single_soil(soil_id, sol_path):
+def load_single_soil_from_block(soil_id, header_lines, block_lines):
     try:
-        soil_obj = SoilProfile.from_file(soil_id, sol_path)
+        # Calls the new in-memory instantiation method we will build in soil.py
+        soil_obj = SoilProfile.from_block(soil_id, header_lines, block_lines)
         return soil_id, soil_obj, None
     except Exception as e:
         return soil_id, None, e
 
-def initialize_all_soils(sol_path, ids, stop_on_error=False, max_workers=4, show_sample_errors=5):
-    # print(f"Loading {len(ids)} soil profiles from {os.path.basename(sol_path)}")
+def initialize_all_soils_in_memory(ids, header_lines, blocks, stop_on_error=False, max_workers=4, show_sample_errors=5):
     soils = {}
     errors = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(load_single_soil, soil_id, sol_path): soil_id for soil_id in ids}
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Loading soil profiles"):
+        futures = {}
+        for soil_id in ids:
+            if soil_id in blocks:
+                futures[executor.submit(load_single_soil_from_block, soil_id, header_lines, blocks[soil_id])] = soil_id
+            else:
+                errors.append((soil_id, ValueError(f"Soil ID {soil_id} not found in master .SOL")))
+                
+        for future in as_completed(futures):
             soil_id, soil_obj, error = future.result()
             if error is not None:
                 errors.append((soil_id, error))
@@ -162,7 +160,6 @@ def initialize_all_soils(sol_path, ids, stop_on_error=False, max_workers=4, show
                 soils[soil_id] = soil_obj
 
     failed = [soil_id for soil_id, _ in errors]
-    # print(f"\nDone. {len(soils)} loaded, {len(failed)} failed.")
     if errors:
         print(f"\nSample errors (showing up to {show_sample_errors}):")
         for soil_id, error in errors[:show_sample_errors]:
@@ -170,21 +167,22 @@ def initialize_all_soils(sol_path, ids, stop_on_error=False, max_workers=4, show
     return soils, failed
 
 def run_batch_soil_load(master_xlsx_path, master_sheet_name, master_id_column, sol_file_path, max_workers=4):
+    # Fetch required IDs and index the master file into memory dicts
     ids = get_soil_ids(master_xlsx_path, master_sheet_name, master_id_column)
     header_lines, blocks = index_soil_blocks(sol_file_path)
 
-    temp_fd, temp_sol_path = tempfile.mkstemp(suffix=".SOL", prefix="soil_subset_")
-    os.close(temp_fd)
+    missing = [sid for sid in ids if sid not in blocks]
+    if missing:
+        print(f"{len(missing)} IDs not found in master .SOL:", missing)
 
-    try:
-        found, missing = write_temp_soil_file(header_lines, blocks, ids, temp_sol_path)
-        if missing:
-            print(f"{len(missing)} IDs not found in master .SOL:", missing)
-
-        soils, failed = initialize_all_soils(sol_path=temp_sol_path, ids=found, stop_on_error=False, max_workers=max_workers)
-    finally:
-        if os.path.exists(temp_sol_path):
-            os.remove(temp_sol_path)
+    # Pass the memory blocks directly to the threaded initializer
+    soils, failed = initialize_all_soils_in_memory(
+        ids=ids, 
+        header_lines=header_lines, 
+        blocks=blocks, 
+        stop_on_error=False, 
+        max_workers=max_workers
+    )
 
     return soils
 
@@ -247,7 +245,7 @@ def parse_planting_date(date_val):
     
 def parse_tillage_schedule(schedule_str):
     events = []
-    if pd.isna(schedule_str) or not str(schedule_str).strip():
+    if pd.isna(schedule_str) or str(schedule_str).strip().lower() in ['', 'nan']:
         return events
     # Format: DAS,TIMPL,TDEP (e.g., "-40,TI007,10; -25,TI014,5")
     for item in str(schedule_str).split(';'):
@@ -335,6 +333,8 @@ def build_planting(row):
 
 def parse_irrigation_schedule(schedule_str):
     events = []
+    if pd.isna(schedule_str) or str(schedule_str).strip().lower() in ['', 'nan']:
+        return events
     for pair in str(schedule_str).split(';'):
         pair = pair.strip()
         if not pair:
@@ -346,7 +346,7 @@ def parse_irrigation_schedule(schedule_str):
 
 def build_irrigation_section(row):
     schedule_str = row.get('IRRIG_SCHEDULE', '')
-    if pd.isna(schedule_str) or not str(schedule_str).strip():
+    if pd.isna(schedule_str) or str(schedule_str).strip().lower() in ['', 'nan']:
         return None
     planting_date = parse_planting_date(row['planting_date'])
     irrigation_events = [
@@ -372,7 +372,7 @@ def apply_irrigation_mode(row, simulation_controls):
 
 def parse_nutrient_schedule(schedule_str):
     events = []
-    if pd.isna(schedule_str) or not str(schedule_str).strip():
+    if pd.isna(schedule_str) or str(schedule_str).strip().lower() in ['', 'nan']:
         return events
     for pair in str(schedule_str).split(';'):
         pair = pair.strip()
@@ -474,9 +474,9 @@ def treatment_done(sim_folder):
     return has_success or has_issue
 
 def run_single_treatment(row, pad_width, sim_dir, wth_folder_path, treatments, stations, soils, crop_objects, fert_material, buffer_days):
-    weather_code = str(row['weather'])
-    soil_code = str(row['soil'])
-    cultivar_key = str(row['cultivar'])
+    weather_code = str(row['weather']).strip()
+    soil_code = str(row['soil']).strip()
+    cultivar_key = str(row['cultivar']).strip()
     run_label = f"T_{int(row['treatment']):0{pad_width}d}"
     sim_folder = os.path.join(sim_dir, run_label)
 
@@ -488,8 +488,9 @@ def run_single_treatment(row, pad_width, sim_dir, wth_folder_path, treatments, s
         run_kwargs = build_run_kwargs(row, weather_code, soil_code, cultivar_key, treatments, stations, soils, crop_objects, fert_material, buffer_days)
         dssat = DSSAT(sim_folder)
 
-        wth_source = os.path.join(wth_folder_path, f"{weather_code}.WTH")
-        shutil.copy(wth_source, sim_folder)
+        # Inject the master weather directory path into the execution arguments
+        run_kwargs['wth_dir'] = wth_folder_path
+
         results = dssat.run_treatment(**run_kwargs)
         return run_label, results, None
     except Exception as e:
@@ -550,8 +551,10 @@ def parse_summary_out(filepath):
 
 def extract_treatment_number(folder_name):
     # Folder name is like "T_001" -> extract the numeric part -> 1
-    match = re.search(r"(\d+)", folder_name)
-    return int(match.group(1)) if match else None
+    try:
+        return int(folder_name.split('_')[1])
+    except (IndexError, ValueError):
+        return None
 
 def load_treatment_cultivar_map(master_xlsx, master_sheet):
     master_df = pd.read_excel(master_xlsx, sheet_name=master_sheet)
@@ -606,11 +609,12 @@ def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, st
     existing_zips = glob.glob(os.path.join(archive_dir, "Success_Batch_*.zip"))
     batch_offset = len(existing_zips)
     
+    trt_pattern = re.compile(r'T_(\d+)/')
     for zip_path in existing_zips:
         try:
             with zipfile.ZipFile(zip_path, 'r') as z:
                 for name in z.namelist():
-                    match = re.search(r'T_(\d+)/', name)
+                    match = trt_pattern.search(name)
                     if match:
                         completed_treatments.add(int(match.group(1)))
         except zipfile.BadZipFile:

@@ -576,6 +576,8 @@ def parse_pars_line(line, fmt):
         line = line[width+1:]
     return pars
 
+_CROP_FILE_CACHE = {}
+
 def _get_croppars(spe_path, code, dtypes_dict, pars_fmt_dict, par_prefix):
     assert par_prefix in ("var#", "eco#")
     class CropPars(Record):
@@ -593,13 +595,24 @@ def _get_croppars(spe_path, code, dtypes_dict, pars_fmt_dict, par_prefix):
             else:
                 header_character = '*'
 
-            encoding = detect_encoding(file_path)
-            with open(file_path, 'r', encoding=encoding) as f:
-                file_lines = f.readlines()
-            self._file_header = filter(
-                lambda x: x[0] == header_character, file_lines
-            ).__next__()
-            file_lines = clean_comments(file_lines)
+            global _CROP_FILE_CACHE
+
+            # Retrieve from memory or read from disk if not cached
+            if file_path not in _CROP_FILE_CACHE:
+                encoding = detect_encoding(file_path)
+                with open(file_path, 'r', encoding=encoding) as f:
+                    raw_lines = f.readlines()
+                
+                file_header = filter(lambda x: x[0] == header_character, raw_lines).__next__()
+                clean_lines = clean_comments(raw_lines)
+                
+                _CROP_FILE_CACHE[file_path] = {
+                    'header': file_header,
+                    'lines': clean_lines
+                }
+
+            self._file_header = _CROP_FILE_CACHE[file_path]['header']
+            file_lines = _CROP_FILE_CACHE[file_path]['lines']
 
             try:
                 line = filter(lambda x: code in x[:10], file_lines).__next__()

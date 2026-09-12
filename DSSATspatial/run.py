@@ -1,4 +1,7 @@
+#run.py
+#created and modified by sakthivel sivakumar
 
+#import libraries
 import subprocess
 import shutil
 import os
@@ -13,6 +16,7 @@ import platform
 import stat
 import re
 import io
+import glob
 
 # Core internal libraries
 from . import VERSION
@@ -90,8 +94,6 @@ class DSSAT:
             )
         if not os.path.exists(run_path):
             os.mkdir(run_path)
-        if not os.path.exists(os.path.join(run_path, "Weather")):
-            os.mkdir(os.path.join(run_path, "Weather"))
         # sys.stdout.write(f'{run_path} created.\n')
         self.run_path = run_path
         self._output = {}
@@ -103,7 +105,7 @@ class DSSAT:
                     fertilizer:Fertilizer=None, soil_analysis:SoilAnalysis=None, 
                     irrigation:Irrigation=None, residue:Residue=None, 
                     chemical:Chemical=None, tillage:Tillage=None, mow:Mow=None,
-                    verbose=True):
+                    verbose=True, wth_dir:str=None):
         assert isinstance(field, Field), "field parameter must be a Field instance."
         assert issubclass(type(cultivar), Crop), \
             "cultivar parameter must be a Crop instance."
@@ -129,12 +131,11 @@ class DSSAT:
             "tillage parameter must be a Tillage instance."
         assert not mow or isinstance(mow, Mow), \
             "mow parameter must be a Mow instance"
-        # Remove previous outputs and inputs
-        OUTPUT_FILES = [i for i in os.listdir(self.run_path) if i[-3:] == 'OUT']
-        INP_FILES = [i for i in os.listdir(self.run_path) if i[-3:] in ['INP', 'INH']]
+        # Remove previous outputs and inputs efficiently using C-optimized glob matching
         self.output_files = {}
-        for file in (OUTPUT_FILES + INP_FILES):
-            os.remove(os.path.join(self.run_path, file))
+        for ext in ('*.OUT', '*.INP', '*.INH'):
+            for file_path in glob.iglob(os.path.join(self.run_path, ext)):
+                os.remove(file_path)
 
         # Assign a generic code for all elements
         # field["id_field"] = "ABCD0001"
@@ -177,14 +178,9 @@ class DSSAT:
         with open(sol_filename, "w") as f:
             lines = field["id_soil"]._write_sol()
             f.write(lines)
-        # Weather
-        wth_year = field["wsta"].table[0]["date"].year
-        wth_len = field["wsta"].table[-1]["date"].year - wth_year + 1
-        wth_filename = f'{field["wsta"]["insi"]}{str(wth_year)[2:]}{wth_len:02d}.WTH'
-        wth_filename = os.path.join(self.run_path, "Weather", wth_filename)
-        with open(wth_filename, "w") as f:
-            lines = field["wsta"]._write_wth()
-            f.write(lines)
+
+        # Weather - defined in configuration
+        
         # Mow
         if type(cultivar).__name__ in PERENIAL_FORAGES:
             if (not mow) or (len(mow.table) < 1):
@@ -196,7 +192,10 @@ class DSSAT:
                     f.write(file_str)
         # Configuration file
         with open(os.path.join(self.run_path, CONFILE), 'w') as f:
-            f.write(f'WED    {os.path.join(self.run_path, "Weather")}\n')
+            # Point DSSAT directly to the master weather directory to avoid copying files
+            safe_wth_dir = wth_dir if wth_dir else self.run_path
+            f.write(f'WED    {safe_wth_dir}\n')
+            # f.write(f'WED    {os.path.join(self.run_path, "Weather")}\n')
             # if cultivar.code in ["WH", "BA"]:
             #     f.write(f'M{cultivar.code}    {self.run_path} {EXE_BASE} CSCER{VERSION}\n')
             # else:
@@ -219,7 +218,7 @@ class DSSAT:
         # Bypass string processing and set stdout to an empty string
         self.stdout = ""
 
-        if verbose:
+        if verbose and excinfo.stdout is not None:
             for line in excinfo.stdout.split("\n"):
                 sys.stdout.write(line + '\n')
 
@@ -263,10 +262,14 @@ class DSSAT:
                 skipinitialspace=True,
             )
 
-            if all(("@YEAR" in df.columns, "DOY" in df.columns)):
-                df["DOY"] = df.DOY.astype(int).map(lambda x: f"{x:03d}")
+            if "@YEAR" in df.columns and "DOY" in df.columns:
+                # Fully vectorized date calculation using numeric arrays to bypass string overhead
+                date_int = df["@YEAR"].astype(int) * 1000 + df["DOY"].astype(int)
+                df.index = pd.to_datetime(date_int, format="%Y%j")
+                
+                # Keep DOY as a zero-padded string for legacy module compatibility using vectorized zfill
+                df["DOY"] = df["DOY"].astype(int).astype(str).str.zfill(3)
                 df["@YEAR"] = df["@YEAR"].astype(str)
-                df.index = pd.to_datetime((df["@YEAR"] + df["DOY"]), format="%Y%j")
 
             self._output[fname] = df
 
