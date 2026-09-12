@@ -474,9 +474,9 @@ def treatment_done(sim_folder):
     return has_success or has_issue
 
 def run_single_treatment(row, pad_width, sim_dir, wth_folder_path, treatments, stations, soils, crop_objects, fert_material, buffer_days):
-    weather_code = str(row['weather'])
-    soil_code = str(row['soil'])
-    cultivar_key = str(row['cultivar'])
+    weather_code = str(row['weather']).strip()
+    soil_code = str(row['soil']).strip()
+    cultivar_key = str(row['cultivar']).strip()
     run_label = f"T_{int(row['treatment']):0{pad_width}d}"
     sim_folder = os.path.join(sim_dir, run_label)
 

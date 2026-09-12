@@ -1,8 +1,14 @@
+#soil.py
+#created and modified by sakthivel sivakumar
+
+#import libraries
 import os
 import sys
+from tqdm import tqdm
 from rosetta import rosetta, SoilData
 from .partypes import NumberType, DescriptionType, Record, CodeType
 
+# Configuration and Constants
 DSSAT_MODULE_PATH = os.path.dirname(__file__)
 
 SURF_PARS_1 = ["name", "soil_data_source", "soil_clasification", "soil_depth", "soil_series_name"]
@@ -11,24 +17,7 @@ SURF_PARS_3 = ['scom', 'salb', 'slu1', 'sldr', 'slro', 'slnf', 'slpf', 'smhb', '
 PROF_PARS_1 = ['slb', 'slmh', 'slll', 'sdul', 'ssat', 'srgf', 'ssks', 'sbdm', 'sloc', 'slcl', 'slsi', 'slcf', 'slni', 'slhw', 'slhb', 'scec', 'sadc']
 PROF_PARS_2 = ['slb', 'slpx', 'slpt', 'slpo', 'caco3', 'slal', 'slfe', 'slmn', 'slbs', 'slpa', 'slpb', 'slke', 'slmg', 'slna', 'slsu', 'slec', 'slca']
 
-pars_fmt = {
-    'name': '<11', 'soil_data_source': '<11', 'soil_clasification': '<6',
-    'soil_depth': '>4.0f', 'soil_series_name': '<64', 'site': '<11',
-    'country': '<11', 'lat': '>8.3f', 'long': '>8.3f', 'scs_family': '<64',
-    'scom': '>5', 'salb': '>5.2f', 'slu1': '>5.1f', 'sldr': '>5.2f',
-    'slro': '>5.0f', 'slnf': '>5.2f', 'slpf': '>5.2f', 'smhb': '>5',
-    'smpx': '>5', 'smke': '>5',
-    'slb': '>5.0f', 'slmh': '<5', 'slll': '>5.3f', 'sdul': '>5.3f',
-    'ssat': '>5.3f', 'srgf': '>5.3f', 'ssks': '>5.2f', 'sbdm': '>5.2f',
-    'sloc': '>5.2f', 'slcl': '>5.1f', 'slsi': '>5.1f', 'slcf': '>5.1f',
-    'slni': '>5.3f', 'slhw': '>5.1f', 'slhb': '>5.1f', 'scec': '>5.1f',
-    'sadc': '>5.1f',
-    'slpx': '>5.1f', 'slpt': '>5.1f', 'slpo': '>5.1f', 'caco3': '>5.2f',
-    'slal': '>5.2f', 'slfe': '>5.2f', 'slmn': '>5.2f', 'slbs': '>5.2f',
-    'slpa': '>5.2f', 'slpb': '>5.2f', 'slke': '>5.2f', 'slmg': '>5.2f',
-    'slna': '>5.2f', 'slsu': '>5.2f', 'slec': '>5.2f', 'slca': '>5.2f'
-}
-
+# Safely applies textbook rounding and padding to raw values
 def format_val(val, fmt):
     if val is None or val == "-99" or val == -99 or str(val).strip() == "":
         width = int(fmt[1:].split('.')[0])
@@ -86,6 +75,25 @@ class SoilProfile(Record):
         'slnf': NumberType, 'slpf': NumberType, 'smhb': CodeType, 
         'smpx': CodeType, 'smke': CodeType
     }
+    
+    # Resolves inheritance error by defining formatting dictionary as a class attribute
+    pars_fmt = {
+        'name': '<11', 'soil_data_source': '<11', 'soil_clasification': '<6',
+        'soil_depth': '>4.0f', 'soil_series_name': '<64', 'site': '<11',
+        'country': '<11', 'lat': '>8.3f', 'long': '>8.3f', 'scs_family': '<64',
+        'scom': '>5', 'salb': '>5.2f', 'slu1': '>5.1f', 'sldr': '>5.2f',
+        'slro': '>5.0f', 'slnf': '>5.2f', 'slpf': '>5.2f', 'smhb': '>5',
+        'smpx': '>5', 'smke': '>5',
+        'slb': '>5.0f', 'slmh': '<5', 'slll': '>5.3f', 'sdul': '>5.3f',
+        'ssat': '>5.3f', 'srgf': '>5.3f', 'ssks': '>5.2f', 'sbdm': '>5.2f',
+        'sloc': '>5.2f', 'slcl': '>5.1f', 'slsi': '>5.1f', 'slcf': '>5.1f',
+        'slni': '>5.3f', 'slhw': '>5.1f', 'slhb': '>5.1f', 'scec': '>5.1f',
+        'sadc': '>5.1f',
+        'slpx': '>5.1f', 'slpt': '>5.1f', 'slpo': '>5.1f', 'caco3': '>5.2f',
+        'slal': '>5.2f', 'slfe': '>5.2f', 'slmn': '>5.2f', 'slbs': '>5.2f',
+        'slpa': '>5.2f', 'slpb': '>5.2f', 'slke': '>5.2f', 'slmg': '>5.2f',
+        'slna': '>5.2f', 'slsu': '>5.2f', 'slec': '>5.2f', 'slca': '>5.2f'
+    }
 
     def __init__(self, raw_block: str, max_depth: float, **kwargs):
         super().__init__()
@@ -123,7 +131,9 @@ class SoilProfile(Record):
         scom_dict = {par: (scom_tokens[i] if i < len(scom_tokens) else "-99") for i, par in enumerate(SURF_PARS_3)}
         
         formatted_lines.append("@ SCOM  SALB  SLU1  SLDR  SLRO  SLNF  SLPF  SMHB  SMPX  SMKE\n")
-        scom_str = " " + " ".join([format_val(scom_dict[par], pars_fmt[par]) for par in SURF_PARS_3]) + "\n"
+        
+        # Access pars_fmt directly via cls object
+        scom_str = " " + " ".join([format_val(scom_dict[par], cls.pars_fmt[par]) for par in SURF_PARS_3]) + "\n"
         formatted_lines.append(scom_str)
         
         formatted_lines.append("@  SLB  SLMH  SLLL  SDUL  SSAT  SRGF  SSKS  SBDM  SLOC  SLCL  SLSI  SLCF  SLNI  SLHW  SLHB  SCEC  SADC\n")
@@ -178,7 +188,7 @@ class SoilProfile(Record):
                     if val is not None:
                         layer_dict[key] = val
 
-            layer_str = " " + " ".join([format_val(layer_dict[par], pars_fmt[par]) for par in PROF_PARS_1]) + "\n"
+            layer_str = " " + " ".join([format_val(layer_dict[par], cls.pars_fmt[par]) for par in PROF_PARS_1]) + "\n"
             formatted_lines.append(layer_str)
             
         if tier2_lines:
@@ -186,7 +196,7 @@ class SoilProfile(Record):
             for layer in tier2_lines:
                 tokens = layer.strip().split()
                 layer_dict = {par: (tokens[i] if i < len(tokens) else "-99") for i, par in enumerate(PROF_PARS_2)}
-                layer_str = " " + " ".join([format_val(layer_dict[par], pars_fmt[par]) for par in PROF_PARS_2]) + "\n"
+                layer_str = " " + " ".join([format_val(layer_dict[par], cls.pars_fmt[par]) for par in PROF_PARS_2]) + "\n"
                 formatted_lines.append(layer_str)
         
         raw_string = "".join(formatted_lines)
