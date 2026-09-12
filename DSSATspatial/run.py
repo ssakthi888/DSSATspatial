@@ -16,6 +16,7 @@ import platform
 import stat
 import re
 import io
+import glob
 
 # Core internal libraries
 from . import VERSION
@@ -130,12 +131,11 @@ class DSSAT:
             "tillage parameter must be a Tillage instance."
         assert not mow or isinstance(mow, Mow), \
             "mow parameter must be a Mow instance"
-        # Remove previous outputs and inputs
-        OUTPUT_FILES = [i for i in os.listdir(self.run_path) if i[-3:] == 'OUT']
-        INP_FILES = [i for i in os.listdir(self.run_path) if i[-3:] in ['INP', 'INH']]
+        # Remove previous outputs and inputs efficiently using C-optimized glob matching
         self.output_files = {}
-        for file in (OUTPUT_FILES + INP_FILES):
-            os.remove(os.path.join(self.run_path, file))
+        for ext in ('*.OUT', '*.INP', '*.INH'):
+            for file_path in glob.iglob(os.path.join(self.run_path, ext)):
+                os.remove(file_path)
 
         # Assign a generic code for all elements
         # field["id_field"] = "ABCD0001"
@@ -262,10 +262,14 @@ class DSSAT:
                 skipinitialspace=True,
             )
 
-            if all(("@YEAR" in df.columns, "DOY" in df.columns)):
-                df["DOY"] = df.DOY.astype(int).map(lambda x: f"{x:03d}")
+            if "@YEAR" in df.columns and "DOY" in df.columns:
+                # Fully vectorized date calculation using numeric arrays to bypass string overhead
+                date_int = df["@YEAR"].astype(int) * 1000 + df["DOY"].astype(int)
+                df.index = pd.to_datetime(date_int, format="%Y%j")
+                
+                # Keep DOY as a zero-padded string for legacy module compatibility using vectorized zfill
+                df["DOY"] = df["DOY"].astype(int).astype(str).str.zfill(3)
                 df["@YEAR"] = df["@YEAR"].astype(str)
-                df.index = pd.to_datetime((df["@YEAR"] + df["DOY"]), format="%Y%j")
 
             self._output[fname] = df
 

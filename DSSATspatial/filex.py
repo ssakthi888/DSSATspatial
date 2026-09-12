@@ -753,29 +753,30 @@ class SimulationControls:
         return "{}({})".format(type(self).__name__, ", ".join(kws))
     
     def _write_section(self):
-        out_str = "*SIMULATION CONTROLS\n"
-        out_str += "@N GENERAL     NYERS NREPS START SDATE RSEED SNAME.................... SMODEL\n"
-        out_str += f" 1 GE          {self.__data['general']._write_row()}"
-        out_str += "@N OPTIONS     WATER NITRO SYMBI PHOSP POTAS DISES  CHEM  TILL   CO2\n"
-        out_str += f" 1 OP          {self.__data['options']._write_row()}"
-        out_str += "@N METHODS     WTHER INCON LIGHT EVAPO INFIL PHOTO HYDRO NSWIT MESOM MESEV MESOL\n"
-        out_str += f" 1 ME          {self.__data['methods']._write_row()}"
-        out_str += "@N MANAGEMENT  PLANT IRRIG FERTI RESID HARVS\n"
-        out_str += f" 1 MA          {self.__data['management']._write_row()}"
-        out_str += "@N OUTPUTS     FNAME OVVEW SUMRY FROPT GROUT CAOUT WAOUT NIOUT MIOUT DIOUT VBOSE CHOUT OPOUT FMOPT\n"
-        out_str += f" 1 OU          {self.__data['outputs']._write_row()}"
-        out_str += f"\n@  AUTOMATIC MANAGEMENT\n"
-        out_str += "@N PLANTING    PFRST PLAST PH2OL PH2OU PH2OD PSTMX PSTMN\n"
-        out_str += f" 1 PL          {self.__data['planting']._write_row()}"
-        out_str += "@N IRRIGATION  IMDEP ITHRL ITHRU IROFF IMETH IRAMT IREFF\n"
-        out_str += f" 1 IR          {self.__data['irrigation']._write_row()}"
-        out_str += "@N NITROGEN    NMDEP NMTHR NAMNT NCODE NAOFF\n"
-        out_str += f" 1 NI          {self.__data['nitrogen']._write_row()}"
-        out_str += "@N RESIDUES    RIPCN RTIME RIDEP\n"
-        out_str += f" 1 RE          {self.__data['residues']._write_row()}"
-        out_str += "@N HARVEST     HFRST HLAST HPCNP HPCNR\n"
-        out_str += f" 1 HA          {self.__data['harvest']._write_row()}"
-        return out_str
+        return (
+            "*SIMULATION CONTROLS\n"
+            "@N GENERAL     NYERS NREPS START SDATE RSEED SNAME.................... SMODEL\n"
+            f" 1 GE          {self.__data['general']._write_row()}"
+            "@N OPTIONS     WATER NITRO SYMBI PHOSP POTAS DISES  CHEM  TILL   CO2\n"
+            f" 1 OP          {self.__data['options']._write_row()}"
+            "@N METHODS     WTHER INCON LIGHT EVAPO INFIL PHOTO HYDRO NSWIT MESOM MESEV MESOL\n"
+            f" 1 ME          {self.__data['methods']._write_row()}"
+            "@N MANAGEMENT  PLANT IRRIG FERTI RESID HARVS\n"
+            f" 1 MA          {self.__data['management']._write_row()}"
+            "@N OUTPUTS     FNAME OVVEW SUMRY FROPT GROUT CAOUT WAOUT NIOUT MIOUT DIOUT VBOSE CHOUT OPOUT FMOPT\n"
+            f" 1 OU          {self.__data['outputs']._write_row()}"
+            "\n@  AUTOMATIC MANAGEMENT\n"
+            "@N PLANTING    PFRST PLAST PH2OL PH2OU PH2OD PSTMX PSTMN\n"
+            f" 1 PL          {self.__data['planting']._write_row()}"
+            "@N IRRIGATION  IMDEP ITHRL ITHRU IROFF IMETH IRAMT IREFF\n"
+            f" 1 IR          {self.__data['irrigation']._write_row()}"
+            "@N NITROGEN    NMDEP NMTHR NAMNT NCODE NAOFF\n"
+            f" 1 NI          {self.__data['nitrogen']._write_row()}"
+            "@N RESIDUES    RIPCN RTIME RIDEP\n"
+            f" 1 RE          {self.__data['residues']._write_row()}"
+            "@N HARVEST     HFRST HLAST HPCNP HPCNR\n"
+            f" 1 HA          {self.__data['harvest']._write_row()}"
+        )
     
 
 class Treatment(Record):
