@@ -375,7 +375,7 @@ class Tillage(TabularRecord):
 class Field(Record):
     prefix = "l"
     dtypes = {
-        "id_field": DescriptionType, "wsta": (DescriptionType, WeatherStation), 
+        "id_field": DescriptionType, "wsta": (DescriptionType, ProcessWTH), 
         "flsa": NumberType, "flob": NumberType, "fldt": CodeType, 
         "fldd": NumberType, "flds": NumberType, "flst": CodeType, 
         "sltx": CodeType, "sldp": NumberType, "id_soil": (DescriptionType, SoilProfile), 
@@ -445,8 +445,8 @@ class Field(Record):
     def __setitem__(self, key, value):
         if key == "id_field":
             assert len(value) == 8, "id_field must be a 8 character string"
-        # if (key == "wsta") and isinstance(value, WeatherStation):
-        #     self.dtypes["wsta"] = WeatherStation
+        # if (key == "wsta") and isinstance(value, ProcessWTH):
+        #     self.dtypes["wsta"] = ProcessWTH
         if (key == "id_soil") and isinstance(value, SoilProfile):
             # self.dtypes["id_soil"] = SoilProfile
             self["sldp"] = value.table[-1]["slb"]
