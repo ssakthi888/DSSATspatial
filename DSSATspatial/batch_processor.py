@@ -131,31 +131,25 @@ def index_soil_blocks(sol_path):
 
     return header_lines, blocks
 
-def write_temp_soil_file(header_lines, blocks, ids, temp_path):
-    found, missing = [], []
-    with open(temp_path, "w") as f:
-        f.writelines(header_lines)
-        for soil_id in ids:
-            if soil_id in blocks:
-                f.writelines(blocks[soil_id])
-                found.append(soil_id)
-            else:
-                missing.append(soil_id)
-    return found, missing
-
-def load_single_soil(soil_id, sol_path):
+def load_single_soil_from_block(soil_id, header_lines, block_lines):
     try:
-        soil_obj = SoilProfile.from_file(soil_id, sol_path)
+        # Calls the new in-memory instantiation method we will build in soil.py
+        soil_obj = SoilProfile.from_block(soil_id, header_lines, block_lines)
         return soil_id, soil_obj, None
     except Exception as e:
         return soil_id, None, e
 
-def initialize_all_soils(sol_path, ids, stop_on_error=False, max_workers=4, show_sample_errors=5):
-    # print(f"Loading {len(ids)} soil profiles from {os.path.basename(sol_path)}")
+def initialize_all_soils_in_memory(ids, header_lines, blocks, stop_on_error=False, max_workers=4, show_sample_errors=5):
     soils = {}
     errors = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(load_single_soil, soil_id, sol_path): soil_id for soil_id in ids}
+        futures = {}
+        for soil_id in ids:
+            if soil_id in blocks:
+                futures[executor.submit(load_single_soil_from_block, soil_id, header_lines, blocks[soil_id])] = soil_id
+            else:
+                errors.append((soil_id, ValueError(f"Soil ID {soil_id} not found in master .SOL")))
+                
         for future in tqdm(as_completed(futures), total=len(futures), desc="Loading soil profiles"):
             soil_id, soil_obj, error = future.result()
             if error is not None:
@@ -166,7 +160,6 @@ def initialize_all_soils(sol_path, ids, stop_on_error=False, max_workers=4, show
                 soils[soil_id] = soil_obj
 
     failed = [soil_id for soil_id, _ in errors]
-    # print(f"\nDone. {len(soils)} loaded, {len(failed)} failed.")
     if errors:
         print(f"\nSample errors (showing up to {show_sample_errors}):")
         for soil_id, error in errors[:show_sample_errors]:
@@ -174,21 +167,22 @@ def initialize_all_soils(sol_path, ids, stop_on_error=False, max_workers=4, show
     return soils, failed
 
 def run_batch_soil_load(master_xlsx_path, master_sheet_name, master_id_column, sol_file_path, max_workers=4):
+    # Fetch required IDs and index the master file into memory dicts
     ids = get_soil_ids(master_xlsx_path, master_sheet_name, master_id_column)
     header_lines, blocks = index_soil_blocks(sol_file_path)
 
-    temp_fd, temp_sol_path = tempfile.mkstemp(suffix=".SOL", prefix="soil_subset_")
-    os.close(temp_fd)
+    missing = [sid for sid in ids if sid not in blocks]
+    if missing:
+        print(f"{len(missing)} IDs not found in master .SOL:", missing)
 
-    try:
-        found, missing = write_temp_soil_file(header_lines, blocks, ids, temp_sol_path)
-        if missing:
-            print(f"{len(missing)} IDs not found in master .SOL:", missing)
-
-        soils, failed = initialize_all_soils(sol_path=temp_sol_path, ids=found, stop_on_error=False, max_workers=max_workers)
-    finally:
-        if os.path.exists(temp_sol_path):
-            os.remove(temp_sol_path)
+    # Pass the memory blocks directly to the threaded initializer
+    soils, failed = initialize_all_soils_in_memory(
+        ids=ids, 
+        header_lines=header_lines, 
+        blocks=blocks, 
+        stop_on_error=False, 
+        max_workers=max_workers
+    )
 
     return soils
 

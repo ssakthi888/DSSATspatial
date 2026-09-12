@@ -55,7 +55,7 @@ warnings.filterwarnings('ignore', category=DeprecationWarning)
 VERSION = '048'
 
 from . import crop
-from .soil import SoilProfile, SoilLayer
+from .soil import SoilProfile
 from .weather import ProcessWTH
 from .run import DSSAT, BIN_PATH, STATIC_PATH
 from . import filex
