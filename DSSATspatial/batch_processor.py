@@ -766,31 +766,24 @@ def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, st
                 args=(os.path.join(archive_dir, f"Error_Batch_{batch_idx:04d}"), error_temp)
             ).start()
 
-        # Final Step: Merge all individual batch CSVs into the master dataset
-        batch_csv_files = glob.glob(os.path.join(archive_dir, "Success_Batch_*.csv"))
+        # Final Step: Merge all individual batch CSVs into the master dataset using pandas concat
+        batch_csv_files = sorted(glob.glob(os.path.join(archive_dir, "Success_Batch_*.csv")))
         if batch_csv_files:
             if os.path.exists(output_csv):
                 os.remove(output_csv)
             
-            # Establish master schema to prevent column mismatch across chunks
+            # Load all validated batch arrays into memory and concatenate cleanly
+            merged_master_df = pd.concat([pd.read_csv(f) for f in batch_csv_files], ignore_index=True)
+            
+            # Apply the filter exclusively if columns_to_keep is explicitly provided
             if columns_to_keep:
-                master_cols = columns_to_keep
-            else:
-                master_cols = []
-                for f in batch_csv_files:
-                    chunk_cols = pd.read_csv(f, nrows=0).columns.tolist()
-                    for col in chunk_cols:
-                        if col not in master_cols:
-                            master_cols.append(col)
-                            
-            for i, f in enumerate(batch_csv_files):
-                chunk_df = pd.read_csv(f)
-                
-                # Reindex enforces exact column order and fills missing columns with NaN
-                chunk_df = chunk_df.reindex(columns=master_cols)
-                
-                # Append aligned data directly to disk
-                chunk_df.to_csv(output_csv, mode='a', index=False, header=(i == 0))
+                for col in columns_to_keep:
+                    if col not in merged_master_df.columns:
+                        merged_master_df[col] = None
+                merged_master_df = merged_master_df[columns_to_keep]
+            
+            # Write the consolidated payload directly to disk
+            merged_master_df.to_csv(output_csv, index=False)
             
     finally:
         sys.stdout = console_stdout
