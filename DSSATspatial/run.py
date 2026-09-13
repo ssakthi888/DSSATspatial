@@ -192,8 +192,19 @@ class DSSAT:
                     f.write(file_str)
         # Configuration file
         with open(os.path.join(self.run_path, CONFILE), 'w') as f:
+            # Route the weather directory through the safe DSSAT_HOME symlink architecture
+            if wth_dir:
+                short_wth_link = os.path.join(DSSAT_HOME, "WTH")
+                if not os.path.exists(short_wth_link):
+                    try:
+                        os.symlink(wth_dir, short_wth_link)
+                    except FileExistsError:
+                        pass # Handle race conditions from concurrent threads
+                safe_wth_dir = short_wth_link
+            else:
+                safe_wth_dir = self.run_path
+
             # Enforce trailing slashes required by the DSSAT Fortran parser
-            safe_wth_dir = wth_dir if wth_dir else self.run_path
             if not safe_wth_dir.endswith(os.sep): 
                 safe_wth_dir += os.sep
                 
