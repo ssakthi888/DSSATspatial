@@ -601,7 +601,10 @@ def run_dssat(row_number, xlsx_path, sheet_name, sim_dir, wth_folder, treatments
             
     return result
 
-def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, stations, soils, crops, max_workers=8, batch_size=100, sdate_buffer=7, fert_material=FERT_MATERIAL, columns_to_keep=None, summary_filename="Summary.OUT"):
+def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, stations, soils, crops, 
+                      max_workers=8, batch_size=100, compress=True, sdate_buffer=7, 
+                      fert_material=FERT_MATERIAL, columns_to_keep=None, summary_filename="Summary.OUT"):
+    
     # Automatically prepare directories and derive internal paths
     log_dir, archive_dir, failed_log, output_csv = prepare_workspace(sim_dir,is_batch=True)
 
@@ -641,6 +644,9 @@ def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, st
         print("All treatments are already completed.")
         return
 
+    if batch_size is None:
+        batch_size = total_rows
+
     console_stdout = sys.stdout
     stdout_router = ThreadLogRouter()
     sys.stdout = stdout_router
@@ -648,6 +654,7 @@ def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, st
     progress_bar = tqdm(total=total_rows, desc="Simulating Treatments", file=console_stdout)
     
     batches = [master_df.iloc[i:i + batch_size] for i in range(0, total_rows, batch_size)]
+    archive_threads = []
     
     try:
         for batch_idx, batch_df in enumerate(batches, start=batch_offset + 1):
@@ -750,21 +757,39 @@ def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, st
                     for f_trt in failed_list:
                         f.write(f"{f_trt}\n")
             
-            def background_archive_and_clean(archive_path, temp_path):
-                if os.path.exists(temp_path) and os.listdir(temp_path):
-                    shutil.make_archive(archive_path, 'zip', temp_path)
-                shutil.rmtree(temp_path, ignore_errors=True)
+            if compress:
+                def background_archive_and_clean(archive_path, temp_path):
+                    if os.path.exists(temp_path) and os.listdir(temp_path):
+                        shutil.make_archive(archive_path, 'zip', temp_path)
+                    shutil.rmtree(temp_path, ignore_errors=True)
 
-            # Dispatch independent I/O threads so the main execution loop proceeds instantly
-            threading.Thread(
-                target=background_archive_and_clean, 
-                args=(os.path.join(archive_dir, f"Success_Batch_{batch_idx:04d}"), success_temp)
-            ).start()
-            
-            threading.Thread(
-                target=background_archive_and_clean, 
-                args=(os.path.join(archive_dir, f"Error_Batch_{batch_idx:04d}"), error_temp)
-            ).start()
+                # Dispatch independent I/O threads and track them for synchronization
+                t_success = threading.Thread(
+                    target=background_archive_and_clean, 
+                    args=(os.path.join(archive_dir, f"Success_Batch_{batch_idx:04d}"), success_temp)
+                )
+                t_error = threading.Thread(
+                    target=background_archive_and_clean, 
+                    args=(os.path.join(archive_dir, f"Error_Batch_{batch_idx:04d}"), error_temp)
+                )
+                t_success.start()
+                t_error.start()
+                archive_threads.extend([t_success, t_error])
+            else:
+                # Bypass compression entirely; retain raw folders
+                if os.path.exists(success_temp) and os.listdir(success_temp):
+                    os.rename(success_temp, os.path.join(archive_dir, f"Success_Batch_{batch_idx:04d}"))
+                else:
+                    shutil.rmtree(success_temp, ignore_errors=True)
+                    
+                if os.path.exists(error_temp) and os.listdir(error_temp):
+                    os.rename(error_temp, os.path.join(archive_dir, f"Error_Batch_{batch_idx:04d}"))
+                else:
+                    shutil.rmtree(error_temp, ignore_errors=True)
+
+        # Synchronize: Wait for all background compression threads to finish before CSV aggregation
+        for t in archive_threads:
+            t.join()
 
         # Final Step: Merge all individual batch CSVs into the master dataset using pandas concat
         batch_csv_files = sorted(glob.glob(os.path.join(archive_dir, "Success_Batch_*.csv")))
