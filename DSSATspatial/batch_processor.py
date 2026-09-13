@@ -640,8 +640,26 @@ def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, st
         total_rows = len(master_df)
         print(f"Resuming execution: Skipped {len(completed_treatments)} completed treatments. {total_rows} remaining.")
         
+    def consolidate_summary():
+        batch_csv_files = sorted(glob.glob(os.path.join(archive_dir, "Success_Batch_*.csv")))
+        if batch_csv_files:
+            if os.path.exists(output_csv):
+                os.remove(output_csv)
+            
+            merged_master_df = pd.concat([pd.read_csv(f) for f in batch_csv_files], ignore_index=True)
+            
+            if columns_to_keep:
+                for col in columns_to_keep:
+                    if col not in merged_master_df.columns:
+                        merged_master_df[col] = None
+                merged_master_df = merged_master_df[columns_to_keep]
+            
+            merged_master_df.to_csv(output_csv, index=False)
+            print(f"Master summary successfully consolidated.")
+
     if total_rows == 0:
-        print("All treatments are already completed.")
+        print("All treatments are already completed. Rebuilding master summary CSV...")
+        consolidate_summary()
         return
 
     if batch_size is None:
@@ -791,24 +809,8 @@ def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, st
         for t in archive_threads:
             t.join()
 
-        # Final Step: Merge all individual batch CSVs into the master dataset using pandas concat
-        batch_csv_files = sorted(glob.glob(os.path.join(archive_dir, "Success_Batch_*.csv")))
-        if batch_csv_files:
-            if os.path.exists(output_csv):
-                os.remove(output_csv)
-            
-            # Load all validated batch arrays into memory and concatenate cleanly
-            merged_master_df = pd.concat([pd.read_csv(f) for f in batch_csv_files], ignore_index=True)
-            
-            # Apply the filter exclusively if columns_to_keep is explicitly provided
-            if columns_to_keep:
-                for col in columns_to_keep:
-                    if col not in merged_master_df.columns:
-                        merged_master_df[col] = None
-                merged_master_df = merged_master_df[columns_to_keep]
-            
-            # Write the consolidated payload directly to disk
-            merged_master_df.to_csv(output_csv, index=False)
+        # Execute the consolidated summary generation
+        consolidate_summary()
             
     finally:
         sys.stdout = console_stdout
