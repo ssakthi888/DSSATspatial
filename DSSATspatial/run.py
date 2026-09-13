@@ -192,18 +192,18 @@ class DSSAT:
                     f.write(file_str)
         # Configuration file
         with open(os.path.join(self.run_path, CONFILE), 'w') as f:
-            # Point DSSAT directly to the master weather directory to avoid copying files
+            # Enforce trailing slashes required by the DSSAT Fortran parser
             safe_wth_dir = wth_dir if wth_dir else self.run_path
+            if not safe_wth_dir.endswith(os.sep): 
+                safe_wth_dir += os.sep
+                
             f.write(f'WED    {safe_wth_dir}\n')
-            # f.write(f'WED    {os.path.join(self.run_path, "Weather")}\n')
-            # if cultivar.code in ["WH", "BA"]:
-            #     f.write(f'M{cultivar.code}    {self.run_path} {EXE_BASE} CSCER{VERSION}\n')
-            # else:
-            f.write(f'M{cultivar.code}    {self.run_path} {EXE_BASE} {cultivar.smodel}{VERSION}\n')
-            f.write(f'CRD    {CRD_PATH}\n')
-            f.write(f'PSD    {os.path.join(DSSAT_HOME, "Pest")}\n')
-            f.write(f'SLD    {SLD_PATH}\n')
-            f.write(f'STD    {STD_PATH}\n')
+            # Use relative current directory (.\) to completely bypass Fortran 80-character path truncation limits
+            f.write(f'M{cultivar.code}    .{os.sep} {EXE_BASE} {cultivar.smodel}{VERSION}\n')
+            f.write(f'CRD    {CRD_PATH}{os.sep}\n')
+            f.write(f'PSD    {os.path.join(DSSAT_HOME, "Pest")}{os.sep}\n')
+            f.write(f'SLD    {SLD_PATH}{os.sep}\n')
+            f.write(f'STD    {STD_PATH}{os.sep}\n')
 
         # Run the model
         run_env = os.environ.copy()
