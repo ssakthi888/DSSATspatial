@@ -291,10 +291,20 @@ class DSSAT:
                 tokens = line[10:].split()
                 if len(tokens) != len(header_tokens):
                     break
-                year_dicts.append({
-                    k.lower(): (int(v) if int(v) != -99 else None)
-                    for k, v in zip(header_tokens, tokens)
-                })
+                
+                row_dict = {}
+                for k, v in zip(header_tokens, tokens):
+                    try:
+                        val = int(v)
+                        row_dict[k.lower()] = val if val != -99 else None
+                    except ValueError:
+                        try:
+                            val = float(v)
+                            row_dict[k.lower()] = val if val != -99.0 else None
+                        except ValueError:
+                            row_dict[k.lower()] = v if v not in ["-99", "-99.0"] else None
+                            
+                year_dicts.append(row_dict)
             out_dict = year_dicts[0] if len(year_dicts) == 1 else year_dicts
         return out_dict
 
