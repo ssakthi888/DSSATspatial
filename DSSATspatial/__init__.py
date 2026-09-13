@@ -10,6 +10,7 @@ import inspect
 
 # 1. Dynamic Environment Setup via Stack Inspection
 _dssat_version = '4.8.5'
+_supported_versions = ['4.8.0', '4.8.5', '4.8.6']
 _system_temp = os.path.join(tempfile.gettempdir(), "DSSAT_Batch_Temp")
 _custom_temp = _system_temp
 
@@ -17,9 +18,12 @@ _custom_temp = _system_temp
 for frame_info in inspect.stack():
     _globals = frame_info.frame.f_globals
     if 'DSSAT_VERSION' in _globals or 'CUSTOM_TEMP' in _globals:
-        _dssat_version = _globals.get('DSSAT_VERSION', _dssat_version)
+        _dssat_version = str(_globals.get('DSSAT_VERSION', _dssat_version))
         _custom_temp = _globals.get('CUSTOM_TEMP', _system_temp)
         break
+
+if _dssat_version not in _supported_versions:
+    raise ValueError(f"Unsupported DSSAT version: '{_dssat_version}'. Supported options are: {_supported_versions}")
 
 _clean_version = _dssat_version.replace('.', '')
 os.environ['DSSAT_EXE'] = f"dscsm0{_clean_version}.exe"

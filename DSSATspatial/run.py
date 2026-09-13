@@ -60,7 +60,7 @@ for file in os.listdir(STATIC_PATH):
         os.remove(file_link)
     os.symlink(os.path.join(STATIC_PATH, file), file_link)
 
-EXE_FILENAME = os.environ.get("DSSAT_EXE", "dscsm0480.exe")
+EXE_FILENAME = os.environ.get("DSSAT_EXE", "dscsm0485.exe")
 EXE_BASE = EXE_FILENAME.replace(".exe", "")
 
 if 'windows'in OS:
@@ -206,26 +206,29 @@ class DSSAT:
             f.write(f'STD    {STD_PATH}\n')
 
         # Run the model
+        run_env = os.environ.copy()
+        run_env["DSSAT_HOME"] = DSSAT_HOME
+
         exc_args = [BIN_PATH, 'C', os.path.basename(filex_name), '1']
         excinfo = subprocess.run(
             exc_args, 
             cwd=self.run_path, 
-            stdout=subprocess.DEVNULL, 
-            stderr=subprocess.DEVNULL,
-            env={"DSSAT_HOME": DSSAT_HOME, }
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE,
+            env=run_env,
+            text=True
         )
 
-        # Bypass string processing and set stdout to an empty string
-        self.stdout = ""
+        self.stdout = excinfo.stdout if excinfo.stdout else ""
 
-        if verbose and excinfo.stdout is not None:
-            for line in excinfo.stdout.split("\n"):
+        if verbose and self.stdout:
+            for line in self.stdout.split("\n"):
                 sys.stdout.write(line + '\n')
 
         if excinfo.returncode != 0:
             with open(os.path.join(self.run_path, "ERROR.OUT"), "r") as f:
                 for line in f:
-                    print(line, end='')
+                    sys.stdout.write(line)
             raise RuntimeError("DSSAT execution Failed. Check the ERROR.OUT file")
 
         # Get the output files
@@ -306,12 +309,12 @@ class DSSAT:
 
     def close(self):
         shutil.rmtree(self.run_path, **WIN_SHUTIL_KWARGS)
-        sys.stdout.write(f'{self.run_path} and its content has been removed.\n')
+        # sys.stdout.write(f'{self.run_path} and its content has been removed.\n')
 
     @property
     def output_tables(self):
         if len(self._output) < 1:
-            warnings.warn("No output has been saved")
+            # warnings.warn("No output has been saved")
             return None
         return self._output
 

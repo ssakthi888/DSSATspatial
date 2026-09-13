@@ -51,6 +51,13 @@ def prepare_workspace(sim_dir, is_batch=True):
 
     os.makedirs(log_dir, exist_ok=True)
     os.makedirs(archive_dir, exist_ok=True)
+    
+    # Purge orphaned execution folders and temporary paths from aborted runs
+    for item in os.listdir(sim_dir):
+        item_path = os.path.join(sim_dir, item)
+        if os.path.isdir(item_path):
+            if re.match(r'^T_\d+$', item) or item in ['Success_Temp', 'Error_Temp']:
+                shutil.rmtree(item_path, ignore_errors=True)
         
     return log_dir, archive_dir, failed_log, output_csv
 
@@ -527,27 +534,31 @@ def run_worker(worker_id, treatments_chunk, pad_width, stdout_router, progress_b
 
 def parse_summary_out(filepath):
     # Parses a single Summary.OUT file: finds the @ header line and the data rows below it
-    with open(filepath, "r") as f:
-        lines = f.readlines()
-    header_idx = None
-    for i, line in enumerate(lines):
-        if line.startswith("@"):
-            header_idx = i
-            break
-    if header_idx is None:
-        return None  # no header found, skip this file
-    header = lines[header_idx].lstrip("@").split()
-    data_rows = []
-    for line in lines[header_idx + 1:]:
-        if line.strip() == "" or line.startswith("*") or line.startswith("!"):
-            continue
-        values = line.split()
-        if len(values) != len(header):
-            continue  # malformed row, skip quietly
-        data_rows.append(values)
-    if not data_rows:
+    try:
+        with open(filepath, "r") as f:
+            lines = f.readlines()
+        header_idx = None
+        for i, line in enumerate(lines):
+            if line.startswith("@"):
+                header_idx = i
+                break
+        if header_idx is None:
+            return None  # no header found, skip this file
+        header = lines[header_idx].lstrip("@").split()
+        data_rows = []
+        for line in lines[header_idx + 1:]:
+            if line.strip() == "" or line.startswith("*") or line.startswith("!"):
+                continue
+            values = line.split()
+            if len(values) != len(header):
+                continue  # malformed row, skip quietly
+            data_rows.append(values)
+        if not data_rows:
+            return None
+        return pd.DataFrame(data_rows, columns=header)
+    except Exception as e:
+        # Catches zero-byte file I/O errors or structural pandas exceptions silently
         return None
-    return pd.DataFrame(data_rows, columns=header)
 
 def extract_treatment_number(folder_name):
     # Folder name is like "T_001" -> extract the numeric part -> 1
@@ -658,8 +669,9 @@ def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, st
             
             batch_dfs = []
             failed_list = []
-            success_temp = os.path.join(sim_dir, "Success_Temp")
-            error_temp = os.path.join(sim_dir, "Error_Temp")
+            # Isolate temporary directories per batch to prevent async I/O race conditions
+            success_temp = os.path.join(sim_dir, f"Success_Temp_{batch_idx:04d}")
+            error_temp = os.path.join(sim_dir, f"Error_Temp_{batch_idx:04d}")
             os.makedirs(success_temp, exist_ok=True)
             os.makedirs(error_temp, exist_ok=True)
             
@@ -676,30 +688,49 @@ def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, st
                 
                 if os.path.exists(summary_file):
                     df = parse_summary_out(summary_file)
+                    is_complete = False
+                    
                     if df is not None:
-                        cultivar_name = cultivar_map.get(trt_num, "UNKNOWN")
-                        df.insert(0, "Treatment", trt_num)
-                        df.insert(1, "cultivar", cultivar_name)
+                        expected_nyears = int(row['NYEARS'])
                         
-                        wsta_col = next((col for col in df.columns if "WSTA" in col.upper()), None)
-                        if wsta_col is not None:
-                            gcodes = df[wsta_col].astype(str).str[:4]
+                        # Primary: Row-count validation
+                        if len(df) >= expected_nyears:
+                            is_complete = True
+                        elif not df.empty:
+                            # Secondary: Timestamp-based validation accommodating late-season overflow
+                            start_year = parse_planting_date(row['planting_date']).year
+                            expected_final_year = str(start_year + expected_nyears - 1)
+                            expected_overflow_year = str(start_year + expected_nyears)
                             
-                            # Create a mapping from the 4-character prefix to coordinates
-                            lat_map = {k[:4]: float(v["lat"]) for k, v in stations.items()}
-                            lon_map = {k[:4]: float(v["long"]) for k, v in stations.items()}
+                            # Scan the last row for the expected final year or the overflow year string
+                            last_row_str = " ".join(df.iloc[-1].astype(str))
+                            if (expected_final_year in last_row_str) or (expected_overflow_year in last_row_str):
+                                is_complete = True
+
+                        if is_complete:
+                            cultivar_name = cultivar_map.get(trt_num, "UNKNOWN")
+                            df.insert(0, "Treatment", trt_num)
+                            df.insert(1, "cultivar", cultivar_name)
                             
-                            df.insert(2, "GCODE", gcodes)
-                            df.insert(3, "Latitude", gcodes.map(lambda g: lat_map.get(g)))
-                            df.insert(4, "Longitude", gcodes.map(lambda g: lon_map.get(g)))
-                        else:
-                            df.insert(2, "GCODE", None)
-                            df.insert(3, "Latitude", None)
-                            df.insert(4, "Longitude", None)
-                            
-                        # Keep all columns for the individual batch files
-                        batch_dfs.append(df)
-                        is_success = True
+                            wsta_col = next((col for col in df.columns if "WSTA" in col.upper()), None)
+                            if wsta_col is not None:
+                                gcodes = df[wsta_col].astype(str).str[:4]
+                                
+                                # Create a mapping from the 4-character prefix to coordinates
+                                lat_map = {k[:4]: float(v["lat"]) for k, v in stations.items()}
+                                lon_map = {k[:4]: float(v["long"]) for k, v in stations.items()}
+                                
+                                df.insert(2, "GCODE", gcodes)
+                                df.insert(3, "Latitude", gcodes.map(lambda g: lat_map.get(g)))
+                                df.insert(4, "Longitude", gcodes.map(lambda g: lon_map.get(g)))
+                            else:
+                                df.insert(2, "GCODE", None)
+                                df.insert(3, "Latitude", None)
+                                df.insert(4, "Longitude", None)
+                                
+                            # Keep all columns for the individual batch files
+                            batch_dfs.append(df)
+                            is_success = True
                 
                 if is_success:
                     shutil.move(sim_folder, os.path.join(success_temp, run_label))
@@ -719,27 +750,47 @@ def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, st
                     for f_trt in failed_list:
                         f.write(f"{f_trt}\n")
             
-            if os.listdir(success_temp):
-                shutil.make_archive(os.path.join(archive_dir, f"Success_Batch_{batch_idx:04d}"), 'zip', success_temp)
-            if os.listdir(error_temp):
-                shutil.make_archive(os.path.join(archive_dir, f"Error_Batch_{batch_idx:04d}"), 'zip', error_temp)
+            def background_archive_and_clean(archive_path, temp_path):
+                if os.path.exists(temp_path) and os.listdir(temp_path):
+                    shutil.make_archive(archive_path, 'zip', temp_path)
+                shutil.rmtree(temp_path, ignore_errors=True)
+
+            # Dispatch independent I/O threads so the main execution loop proceeds instantly
+            threading.Thread(
+                target=background_archive_and_clean, 
+                args=(os.path.join(archive_dir, f"Success_Batch_{batch_idx:04d}"), success_temp)
+            ).start()
             
-            shutil.rmtree(success_temp)
-            shutil.rmtree(error_temp)
+            threading.Thread(
+                target=background_archive_and_clean, 
+                args=(os.path.join(archive_dir, f"Error_Batch_{batch_idx:04d}"), error_temp)
+            ).start()
 
         # Final Step: Merge all individual batch CSVs into the master dataset
         batch_csv_files = glob.glob(os.path.join(archive_dir, "Success_Batch_*.csv"))
         if batch_csv_files:
-            merged_master_df = pd.concat([pd.read_csv(f) for f in batch_csv_files], ignore_index=True)
+            if os.path.exists(output_csv):
+                os.remove(output_csv)
             
-            # Apply the filter exclusively if columns_to_keep is explicitly provided
+            # Establish master schema to prevent column mismatch across chunks
             if columns_to_keep:
-                for col in columns_to_keep:
-                    if col not in merged_master_df.columns:
-                        merged_master_df[col] = None
-                merged_master_df = merged_master_df[columns_to_keep]
-            
-            merged_master_df.to_csv(output_csv, index=False)
+                master_cols = columns_to_keep
+            else:
+                master_cols = []
+                for f in batch_csv_files:
+                    chunk_cols = pd.read_csv(f, nrows=0).columns.tolist()
+                    for col in chunk_cols:
+                        if col not in master_cols:
+                            master_cols.append(col)
+                            
+            for i, f in enumerate(batch_csv_files):
+                chunk_df = pd.read_csv(f)
+                
+                # Reindex enforces exact column order and fills missing columns with NaN
+                chunk_df = chunk_df.reindex(columns=master_cols)
+                
+                # Append aligned data directly to disk
+                chunk_df.to_csv(output_csv, mode='a', index=False, header=(i == 0))
             
     finally:
         sys.stdout = console_stdout
