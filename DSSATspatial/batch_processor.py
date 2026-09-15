@@ -497,8 +497,31 @@ def run_single_treatment(row, pad_width, sim_dir, wth_folder_path, treatments, s
 
         # Inject the master weather directory path into the execution arguments
         run_kwargs['wth_dir'] = wth_folder_path
+        run_kwargs['verbose'] = False  # Suppress default run.py output
 
         results = dssat.run_treatment(**run_kwargs)
+        
+        # Extract dataset metadata for the custom header
+        trt_num = int(row['treatment'])
+        cultivar = str(row['cultivar']).strip()
+        soil = str(row['soil']).strip()
+        wsta = str(row['weather']).strip()
+        
+        # Filter and inject custom log output
+        if hasattr(dssat, 'stdout') and dssat.stdout:
+            header = f"\n--- TRT: {trt_num} | CULTIVAR: {cultivar} | SOIL: {soil} | WSTA: {wsta} ---"
+            print(header)
+            
+            for line in dssat.stdout.split('\n'):
+                # Skip blank lines and repetitive execution banners
+                if not line.strip() or "COPYRIGHT" in line or "DSSAT" in line or "====" in line:
+                    continue
+                
+                # Replace the generic "1" run and treatment identifiers with the true treatment number
+                # Matches the leading run format (e.g., "  1 SG   1" -> " 23 SG  23")
+                clean_line = re.sub(r'^\s*1\s+([A-Z]{2})\s+1', f"{trt_num:>3} \\1 {trt_num:>3}", line)
+                print(clean_line)
+
         return run_label, results, None
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
