@@ -528,7 +528,9 @@ def run_single_treatment(row, pad_width, sim_dir, wth_folder_path, treatments, s
         print(error_msg)
         return run_label, None, error_msg
 
-def run_worker(worker_id, treatments_chunk, pad_width, stdout_router, progress_bar, progress_lock, worker_pad, log_dir, sim_dir, wth_folder_path, treatments, stations, soils, crop_objects, fert_material, buffer_days):
+def run_worker(worker_id, treatments_chunk, pad_width, stdout_router, progress_bar, progress_lock, worker_pad, log_dir, 
+               sim_dir, wth_folder_path, treatments, stations, soils, crop_objects, fert_material, buffer_days,
+               xlsx_path=None, sheet_name=None):
     worker_tag = f"worker_{worker_id:0{worker_pad}d}"
     output_path = os.path.join(log_dir, f"{worker_tag}_output.txt")
     error_path = os.path.join(log_dir, f"{worker_tag}_errors.txt")
@@ -538,12 +540,11 @@ def run_worker(worker_id, treatments_chunk, pad_width, stdout_router, progress_b
     worker_skipped = []
 
     with open(output_path, "a", encoding="utf-8") as output_handle:
-        # Inject log parameters directly into the existing worker output file
         output_handle.write(f"\n--- NEW EXECUTION START ---\n")
         output_handle.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        output_handle.write(f"Simulation Dir: {sim_dir}\n")
-        output_handle.write(f"Weather Folder: {wth_folder_path}\n")
-        output_handle.write(f"Buffer Days: {buffer_days}\n")
+        output_handle.write(f"Input Excel File: {xlsx_path}\n")
+        output_handle.write(f"Master Sheetname: {sheet_name}\n")
+        output_handle.write(f"Input WTH Folder: {wth_folder_path}\n")
         output_handle.write(f"---------------------------\n\n")
 
         stdout_router.register(output_handle)  # from now on, this thread's prints go here
@@ -716,7 +717,7 @@ def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, st
                         run_worker, worker_id + 1, chunk, pad_width, stdout_router, 
                         progress_bar, progress_lock, worker_pad, log_dir, sim_dir, 
                         wth_folder, treatments, stations, soils, crops, 
-                        fert_material, sdate_buffer
+                        fert_material, sdate_buffer, xlsx_path, sheet_name
                     )
                     for worker_id, chunk in enumerate(worker_chunks) if chunk
                 ]
