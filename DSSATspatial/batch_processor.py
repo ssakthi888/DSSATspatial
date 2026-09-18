@@ -538,6 +538,14 @@ def run_worker(worker_id, treatments_chunk, pad_width, stdout_router, progress_b
     worker_skipped = []
 
     with open(output_path, "a", encoding="utf-8") as output_handle:
+        # Inject log parameters directly into the existing worker output file
+        output_handle.write(f"\n--- NEW EXECUTION START ---\n")
+        output_handle.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        output_handle.write(f"Simulation Dir: {sim_dir}\n")
+        output_handle.write(f"Weather Folder: {wth_folder_path}\n")
+        output_handle.write(f"Buffer Days: {buffer_days}\n")
+        output_handle.write(f"---------------------------\n\n")
+
         stdout_router.register(output_handle)  # from now on, this thread's prints go here
 
         for row in treatments_chunk:

@@ -17,6 +17,7 @@ import stat
 import re
 import io
 import glob
+import hashlib
 
 # Core internal libraries
 from . import VERSION
@@ -190,16 +191,19 @@ class DSSAT:
                 with open(mow_file_path, 'w') as f: 
                     file_str = mow._write_section()
                     f.write(file_str)
+
         # Configuration file
         with open(os.path.join(self.run_path, CONFILE), 'w') as f:
-            # Route the weather directory through the safe DSSAT_HOME symlink architecture
             if wth_dir:
-                short_wth_link = os.path.join(DSSAT_HOME, "WTH")
+                # Generate a guaranteed unique 6-character hash of the folder path
+                path_hash = hashlib.md5(wth_dir.encode('utf-8')).hexdigest()[:6]
+                short_wth_link = os.path.join(DSSAT_HOME, f"W_{path_hash}")
+                
                 if not os.path.exists(short_wth_link):
                     try:
                         os.symlink(wth_dir, short_wth_link)
                     except FileExistsError:
-                        pass # Handle race conditions from concurrent threads
+                        pass
                 safe_wth_dir = short_wth_link
             else:
                 safe_wth_dir = self.run_path
