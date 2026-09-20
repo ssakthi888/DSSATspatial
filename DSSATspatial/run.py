@@ -64,12 +64,15 @@ for file in os.listdir(STATIC_PATH):
 EXE_FILENAME = os.environ.get("DSSAT_EXE", "dscsm0485.exe")
 EXE_BASE = EXE_FILENAME.replace(".exe", "")
 
-if 'windows'in OS:
+if 'windows' in OS:
     BIN_PATH = os.path.join(BASE_PATH, 'bin', EXE_FILENAME)
     CONFILE = 'DSSATPRO.V48'
 else: 
     BIN_PATH = os.path.join(BASE_PATH, 'bin', EXE_BASE)
     CONFILE = 'DSSATPRO.L48'
+    if os.path.exists(BIN_PATH):
+        st = os.stat(BIN_PATH)
+        os.chmod(BIN_PATH, st.st_mode | stat.S_IEXEC)
 
 # function to handle windows permisions
 def handleRemoveReadonly(func, path, excinfo):
@@ -224,7 +227,8 @@ class DSSAT:
         run_env = os.environ.copy()
         run_env["DSSAT_HOME"] = DSSAT_HOME
 
-        exc_args = [BIN_PATH, 'C', os.path.basename(filex_name), '1']
+        # exc_args = [BIN_PATH, 'C', os.path.basename(filex_name), '1']
+        exc_args = [BIN_PATH, 'A', os.path.basename(filex_name)]
         excinfo = subprocess.run(
             exc_args, 
             cwd=self.run_path, 

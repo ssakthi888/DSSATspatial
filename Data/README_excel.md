@@ -1,6 +1,6 @@
 # Demonstration Directory: Sample Notebooks and Master Matrix
 
-This directory contains sample Jupyter notebooks and a template execution matrix (`master_matrix_template.xlsx`) required to test the `DSSATspatial` batch processing workflows. The spatial modeling pipeline is driven by this primary Excel dataset and is designed to be fully crop-specific. 
+This directory contains a template execution matrix (`Master_maize.xlsx`) required to test the `DSSATspatial` batch processing workflows. The spatial modeling pipeline is driven by this primary Excel dataset and is designed to be fully crop-specific. 
 
 The following rules specify the parameterization of the master sheet for any supported DSSAT crop model.
 
