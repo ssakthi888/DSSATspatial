@@ -233,10 +233,10 @@ class DateType(date):
     def __new__(cls, name, value, fmt):
         if isinstance(value, (date, datetime)):
             pass
-        elif value is None:
+        elif value is None or str(value).strip() in ["", "-99"]:
             value = date(9999, 1, 1)
-        elif int(value) == -99:
-            value = date(9999, 1, 1)
+        elif str(value).strip() in ["0", "00000"]:
+            value = date(1, 1, 1)
         elif isinstance(value, str):
             if len(value.strip()) < 5:
                 value = f"{int(value):05d}"
@@ -260,9 +260,12 @@ class DateType(date):
     
     @property
     def str(self):
-        if self.year == 9999 :
+        if self.year == 9999:
             len_fmt = len(self.strftime(self.fmt))
             return _format(-99, f'>{len_fmt}.0f')
+        elif self.year == 1:
+            len_fmt = len(self.strftime(self.fmt))
+            return _format(0, f'>{len_fmt}.0f')
         else:
             return _format(self, self.fmt)
 
