@@ -469,7 +469,13 @@ def build_run_kwargs(row, weather_code, soil_code, cultivar_key, treatments, sta
         
         # Override to 7 days before Tillage if Tillage is present and earlier
         if 'tillage' in run_kwargs and run_kwargs['tillage'].table:
-            till_dates = [evt['tdate'] for evt in run_kwargs['tillage'].table if hasattr(evt['tdate'], 'year')]
+            till_dates = []
+            for evt in run_kwargs['tillage'].table:
+                if hasattr(evt['tdate'], 'year') and evt['tdate'].year < 9000:
+                    # Cast custom DateType to standard Python date to safely bypass subclass constructor crash
+                    pure_date = datetime(evt['tdate'].year, evt['tdate'].month, evt['tdate'].day).date()
+                    till_dates.append(pure_date)
+                    
             if till_dates:
                 earliest_till = min(till_dates)
                 if earliest_till < sim_start:
