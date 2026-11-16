@@ -473,35 +473,15 @@ def build_run_kwargs(row, weather_code, soil_code, cultivar_key, treatments, sta
     if chem_sec is not None: run_kwargs['chemical'] = chem_sec
 
     if 'SimulationControls' in base_treatment:
-        sim_controls = shift_record_dates(base_treatment['SimulationControls'])
+        sim_controls = clone_record(base_treatment['SimulationControls'])
         sim_controls['general'] = clone_record(sim_controls['general'])
         sim_controls['management'] = clone_record(sim_controls['management'])
         sim_controls = apply_irrigation_mode(row, sim_controls)
-        
-        if fert_sec is not None:
-            sim_controls['management']['ferti'] = ferti_flag
-        sim_controls['management']['harvs'] = 'M'
-        
-        # Safely determine SDATE securely behind the absolute earliest shifted event
-        earliest_date = new_pdate
-        for key, section in run_kwargs.items():
-            if hasattr(section, 'items'):
-                for attr, val in section.items():
-                    if hasattr(val, 'toordinal') and 1 < val.year < 9000 and val < earliest_date:
-                        earliest_date = val
-            if hasattr(section, 'table') and section.table:
-                for event in section.table:
-                    for attr, val in event.items():
-                        if hasattr(val, 'toordinal') and 1 < val.year < 9000 and val < earliest_date:
-                            earliest_date = val
-                            
-        sim_start = earliest_date - timedelta(days=buffer_days)
-        sdate_str = f"{sim_start.year % 100:02d}{sim_start.timetuple().tm_yday:03d}"
-        
+        sim_controls['management']['ferti'] = ferti_flag
+        sim_controls['management']['harvs'] = 'M'   # <-- add this line
         sim_controls = set_nyears(sim_controls, int(row['NYEARS']))
-        sim_controls = set_start_date(sim_controls, sdate_str)
+        sim_controls = set_start_date(sim_controls, build_sdate(row, buffer_days))  # SDATE = planting_date minus buffer
         run_kwargs['simulation_controls'] = sim_controls
-        
     return run_kwargs
 
 class ThreadLogRouter:
