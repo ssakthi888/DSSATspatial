@@ -414,13 +414,23 @@ def set_nyears(simulation_controls, nyears):
     return simulation_controls
 
 def build_run_kwargs(row, weather_code, soil_code, cultivar_key, treatments, stations, soils, crop_objects, fert_material, buffer_days):
-    base_treatment = treatments[1]
+    trt_num = int(row.get('treatment', 1))
+    base_treatment = treatments.get(trt_num, treatments.get(1))
+    
     field = clone_record(base_treatment['Field'])
     field['wsta'] = stations[weather_code]
     field['id_soil'] = soils[soil_code]
     run_kwargs = {'field': field, 'cultivar': crop_objects[cultivar_key]}
+    
     for key, arg_name in [
         ('Chemical', 'chemical'),
+        ('SoilAnalysis', 'soil_analysis'),
+        ('InitialConditions', 'initial_conditions'),
+        ('Residue', 'residue'),
+        ('Harvest', 'harvest'),
+        ('Irrigation', 'irrigation'),
+        ('Fertilizer', 'fertilizer'),
+        ('Tillage', 'tillage')
     ]:
         if key in base_treatment:
             run_kwargs[arg_name] = base_treatment[key]
