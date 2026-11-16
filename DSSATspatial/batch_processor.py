@@ -226,7 +226,7 @@ def clone_record(record):
     return new_record
 
 def convert_to_yyddd(date_val):
-    date_str = str(int(date_val))
+    date_str = str(int(float(date_val)))
     if len(date_str) == 8:
         date_obj = datetime.strptime(date_str, "%Y%m%d")  # yyyymmdd
     elif len(date_str) == 7:
@@ -240,7 +240,7 @@ def convert_to_yyddd(date_val):
     return f"{yy:02d}{doy:03d}"
 
 def parse_planting_date(date_val):
-    date_str = str(int(date_val))
+    date_str = str(int(float(date_val)))
     if len(date_str) == 8:
         return datetime.strptime(date_str, "%Y%m%d").date()  # yyyymmdd
     elif len(date_str) == 7:
@@ -249,58 +249,21 @@ def parse_planting_date(date_val):
         return datetime.strptime(date_str, "%y%j").date()  # yyddd
     else:
         raise ValueError(f"Unexpected planting_date format: {date_str}")
-    
-def parse_tillage_schedule(schedule_str):
-    events = []
-    if pd.isna(schedule_str) or str(schedule_str).strip().lower() in ['', 'nan']:
-        return events
-    # Format: DAS,TIMPL,TDEP (e.g., "-40,TI007,10; -25,TI014,5")
-    for item in str(schedule_str).split(';'):
-        item = item.strip()
-        if not item:
-            continue
-        parts = item.split(',')
-        if len(parts) >= 3:
-            das = int(parts[0].strip())
-            timpl = parts[1].strip()
-            tdep = float(parts[2].strip())
-            events.append((das, timpl, tdep))
-    return events
 
 def build_tillage_section(row):
-    schedule_str = row.get('Tillage_schedule', '')
-    events = parse_tillage_schedule(schedule_str)
-    if not events:
-        return None
-    planting_date = parse_planting_date(row['planting_date'])
-    tillage_events = []
-    for das, timpl, tdep in events:
-        tdate = planting_date + timedelta(days=das)
-        tillage_events.append(filex.TillageEvent(tdate=tdate, timpl=timpl, tdep=tdep))
-    return filex.Tillage(table=tillage_events)
-
-def build_chemical_section(row, base_treatment):
-    if 'Chemical' not in base_treatment:
-        return None
-    base_chem = base_treatment['Chemical']
-    base_pdate = base_treatment['Planting']['pdate']
-    new_pdate = parse_planting_date(row['planting_date'])
-    chem_events = []
-    for event in base_chem.table:
-        das = (event['cdate'] - base_pdate).days
-        new_event = clone_record(event)
-        new_event['cdate'] = new_pdate + timedelta(days=das)
-        chem_events.append(new_event)
-    return filex.Chemical(table=chem_events)
+    # Process explicit calendar TDATE if present
+    if 'TDATE' in row and pd.notna(row['TDATE']) and str(row['TDATE']).strip():
+        tdate = parse_planting_date(row['TDATE'])
+        # Since TIMPL and TDEP were skipped in excel, hardcode standard defaults
+        timpl = 'TI003'
+        tdep = 20.0
+        tillage_event = filex.TillageEvent(tdate=tdate, timpl=timpl, tdep=tdep)
+        return filex.Tillage(table=[tillage_event])
+    return None
 
 def build_sdate(row, buffer_days):
     planting_date = parse_planting_date(row['planting_date'])
     min_das = 0
-    
-    # Check Tillage
-    t_events = parse_tillage_schedule(row.get('Tillage_schedule', ''))
-    if t_events:
-        min_das = min(min_das, min([das for das, timpl, tdep in t_events]))
         
     # Check Fertilizer
     for col in ['N_application', 'P_application', 'K_application']:
@@ -324,17 +287,25 @@ def set_start_date(simulation_controls, sdate):
     simulation_controls['general']['start'] = 'S'
     return simulation_controls
 
-def build_planting(row):
+def build_planting(row, base_treatment):
+    base_p = base_treatment['Planting']
     planting_date = convert_to_yyddd(row['planting_date'])
+    
+    def get_val(col, default):
+        val = row.get(col, default)
+        return default if pd.isna(val) else val
+        
     planting = filex.Planting(
         pdate=planting_date,
-        ppop=row['PLPOP'],
-        ppoe=row['PPOE'],
-        plme='S',
-        plds='R',
-        plrs=row['PLRS'],
-        plrd=90.0,
-        pldp=row['PLDP']
+        ppop=get_val('PLPOP', base_p['ppop']),
+        ppoe=get_val('PPOE', base_p['ppoe']),
+        plme=str(get_val('PLME', base_p['plme'])).strip().upper(),
+        plds=str(get_val('PLDS', base_p['plds'])).strip().upper(),
+        plrs=get_val('PLRS', base_p['plrs']),
+        plrd=get_val('PLRD', base_p['plrd']),
+        pldp=get_val('PLDP', base_p['pldp']),
+        page=get_val('PAGE', base_p.get('page', -99)),
+        plwt=base_p.get('plwt', -99)  # strictly inherited from the master RIX file
     )
     return planting
 
@@ -436,7 +407,7 @@ def build_run_kwargs(row, weather_code, soil_code, cultivar_key, treatments, sta
         if key in base_treatment:
             run_kwargs[arg_name] = clone_record(base_treatment[key])
 
-    run_kwargs['planting'] = build_planting(row)
+    run_kwargs['planting'] = build_planting(row, base_treatment)
 
     # Excel scheduling overlay
     irrigation_section = build_irrigation_section(row)
@@ -451,37 +422,59 @@ def build_run_kwargs(row, weather_code, soil_code, cultivar_key, treatments, sta
     if tillage_section is not None:
         run_kwargs['tillage'] = tillage_section
 
-    chemical_section = build_chemical_section(row, base_treatment)
-    if chemical_section is not None:
-        run_kwargs['chemical'] = chemical_section
-
     if 'SimulationControls' in base_treatment:
         sim_controls = clone_record(base_treatment['SimulationControls'])
         sim_controls['general'] = clone_record(sim_controls['general'])
+        sim_controls['options'] = clone_record(sim_controls['options'])
+        sim_controls['methods'] = clone_record(sim_controls['methods'])
         sim_controls['management'] = clone_record(sim_controls['management'])
         sim_controls = apply_irrigation_mode(row, sim_controls)
         sim_controls['management']['ferti'] = ferti_flag
-        sim_controls['management']['harvs'] = 'M'   # <-- add this line
         
-        # Base SDATE from Excel scheduling
-        sdate_str = build_sdate(row, buffer_days)
-        sim_start = datetime.strptime(sdate_str, "%y%j").date()
+        # 1. Harvest Mode Logic (Falls back to FileX if empty in Excel)
+        harv_mode_val = str(row.get('Harvest_mode', '')).strip().upper()
+        if harv_mode_val in ['M', 'R', 'A']:
+            sim_controls['management']['harvs'] = harv_mode_val
         
-        # Override to 7 days before Tillage if Tillage is present and earlier
-        if 'tillage' in run_kwargs and run_kwargs['tillage'].table:
-            till_dates = []
-            for evt in run_kwargs['tillage'].table:
-                if hasattr(evt['tdate'], 'year') and evt['tdate'].year < 9000:
-                    # Cast custom DateType to standard Python date to safely bypass subclass constructor crash
-                    pure_date = datetime(evt['tdate'].year, evt['tdate'].month, evt['tdate'].day).date()
-                    till_dates.append(pure_date)
-                    
-            if till_dates:
-                earliest_till = min(till_dates)
-                if earliest_till < sim_start:
-                    sim_start = earliest_till - timedelta(days=buffer_days)
-                    sdate_str = f"{sim_start.year % 100:02d}{sim_start.timetuple().tm_yday:03d}"
-                    
+        # If mode is R, calculate exactly when to harvest based on HDATE_DAS
+        if sim_controls['management']['harvs'] == 'R' and 'HDATE_DAS' in row and pd.notna(row['HDATE_DAS']) and str(row['HDATE_DAS']).strip():
+            if 'harvest' in run_kwargs and run_kwargs['harvest'].table:
+                new_pdate = parse_planting_date(row['planting_date'])
+                harvest_date = new_pdate + timedelta(days=int(float(row['HDATE_DAS'])))
+                run_kwargs['harvest'].table[0]['hdate'] = harvest_date
+
+        # 2. Dynamic Options and Methods Overrides (Falls back to FileX if empty in Excel)
+        if 'CO2' in row and pd.notna(row['CO2']) and str(row['CO2']).strip():
+            sim_controls['options']['co2'] = str(row['CO2']).strip().upper()
+        if 'EVAPO' in row and pd.notna(row['EVAPO']) and str(row['EVAPO']).strip():
+            sim_controls['methods']['evapo'] = str(row['EVAPO']).strip().upper()
+        if 'INFIL' in row and pd.notna(row['INFIL']) and str(row['INFIL']).strip():
+            sim_controls['methods']['infil'] = str(row['INFIL']).strip().upper()
+        if 'PHOTO' in row and pd.notna(row['PHOTO']) and str(row['PHOTO']).strip():
+            sim_controls['methods']['photo'] = str(row['PHOTO']).strip().upper()
+        
+        # Base SDATE from explicit Excel override or fallback to dynamic calculation
+        if 'SDATE' in row and pd.notna(row['SDATE']) and str(row['SDATE']).strip():
+            sim_start = parse_planting_date(row['SDATE'])
+            sdate_str = f"{sim_start.year % 100:02d}{sim_start.timetuple().tm_yday:03d}"
+        else:
+            sdate_str = build_sdate(row, buffer_days)
+            sim_start = datetime.strptime(sdate_str, "%y%j").date()
+            
+            # Override to 7 days before Tillage if Tillage is present and earlier
+            if 'tillage' in run_kwargs and run_kwargs['tillage'].table:
+                till_dates = []
+                for evt in run_kwargs['tillage'].table:
+                    if hasattr(evt['tdate'], 'year') and evt['tdate'].year < 9000:
+                        pure_date = datetime(evt['tdate'].year, evt['tdate'].month, evt['tdate'].day).date()
+                        till_dates.append(pure_date)
+                        
+                if till_dates:
+                    earliest_till = min(till_dates)
+                    if earliest_till < sim_start:
+                        sim_start = earliest_till - timedelta(days=buffer_days)
+                        sdate_str = f"{sim_start.year % 100:02d}{sim_start.timetuple().tm_yday:03d}"
+                        
         sim_controls = set_nyears(sim_controls, int(row['NYEARS']))
         sim_controls = set_start_date(sim_controls, sdate_str)
         run_kwargs['simulation_controls'] = sim_controls
