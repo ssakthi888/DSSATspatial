@@ -263,6 +263,15 @@ def build_tillage_section(row):
 def build_sdate(row, buffer_days):
     planting_date = parse_planting_date(row['planting_date'])
     min_das = 0
+
+    # Factor in transplant age (PAGE) to prevent Fortran date underflows (Year 2101 bug)
+    if 'PLME' in row and str(row['PLME']).strip().upper() == 'T':
+        page_val = row.get('PAGE', 0)
+        if pd.notna(page_val) and str(page_val).strip() != '':
+            try:
+                min_das = min(min_das, -int(float(page_val)))
+            except ValueError:
+                pass
         
     # Check Fertilizer
     for col in ['N_application', 'P_application', 'K_application']:
@@ -407,6 +416,13 @@ def build_run_kwargs(row, weather_code, soil_code, cultivar_key, treatments, sta
     ]:
         if key in base_treatment:
             run_kwargs[arg_name] = clone_record(base_treatment[key])
+
+    # Fallback: Guarantee a Harvest block exists to prevent IPHAR errors
+    if 'harvest' not in run_kwargs:
+        run_kwargs['harvest'] = filex.Harvest(
+            hdate=parse_planting_date(row['planting_date']), 
+            hstg='GS000', hcom='M', hsize='A', hpc=100.0, hbpc=0.0
+        )
 
     run_kwargs['planting'] = build_planting(row, base_treatment)
 
