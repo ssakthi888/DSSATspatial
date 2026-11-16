@@ -422,53 +422,77 @@ def build_run_kwargs(row, weather_code, soil_code, cultivar_key, treatments, sta
     field['id_soil'] = soils[soil_code]
     run_kwargs = {'field': field, 'cultivar': crop_objects[cultivar_key]}
     
+    # Calculate date shift between master RIX planting and Excel planting
+    base_pdate = base_treatment['Planting']['pdate']
+    new_pdate = parse_planting_date(row['planting_date'])
+    shift_days = (new_pdate - base_pdate).days
+
+    # Deep shift all hardcoded dates relative to the new planting date
+    def shift_record_dates(record):
+        new_rec = clone_record(record)
+        for attr, val in new_rec.items():
+            if hasattr(val, 'toordinal'):
+                if 1 < val.year < 9000:
+                    new_rec[attr] = val + timedelta(days=shift_days)
+            elif hasattr(val, 'items') and attr not in ('wsta', 'id_soil'):
+                new_rec[attr] = shift_record_dates(val)
+        if hasattr(new_rec, 'table') and new_rec.table:
+            new_table = []
+            for event in new_rec.table:
+                new_event = clone_record(event)
+                for attr, val in new_event.items():
+                    if hasattr(val, 'toordinal'):
+                        if 1 < val.year < 9000:
+                            new_event[attr] = val + timedelta(days=shift_days)
+                new_table.append(new_event)
+            new_rec.table = new_table
+        return new_rec
+
     for key, arg_name in [
-        ('Chemical', 'chemical'),
-        ('SoilAnalysis', 'soil_analysis'),
-        ('InitialConditions', 'initial_conditions'),
-        ('Residue', 'residue'),
-        ('Harvest', 'harvest'),
-        ('Irrigation', 'irrigation'),
-        ('Fertilizer', 'fertilizer'),
-        ('Tillage', 'tillage')
+        ('Chemical', 'chemical'), ('SoilAnalysis', 'soil_analysis'),
+        ('InitialConditions', 'initial_conditions'), ('Residue', 'residue'),
+        ('Harvest', 'harvest'), ('Irrigation', 'irrigation'),
+        ('Fertilizer', 'fertilizer'), ('Tillage', 'tillage')
     ]:
         if key in base_treatment:
-            run_kwargs[arg_name] = base_treatment[key]
+            run_kwargs[arg_name] = shift_record_dates(base_treatment[key])
+            
     run_kwargs['planting'] = build_planting(row)
 
-    irrigation_section = build_irrigation_section(row)
-    if irrigation_section is not None:
-        run_kwargs['irrigation'] = irrigation_section
+    # Excel schedules overlay and overwrite if they are present
+    irr_sec = build_irrigation_section(row)
+    if irr_sec is not None: run_kwargs['irrigation'] = irr_sec
 
-    fertilizer_section, ferti_flag = build_fertilizer_section(row, fert_material)
-    if fertilizer_section is not None:
-        run_kwargs['fertilizer'] = fertilizer_section
+    fert_sec, ferti_flag = build_fertilizer_section(row, fert_material)
+    if fert_sec is not None: run_kwargs['fertilizer'] = fert_sec
 
-    tillage_section = build_tillage_section(row)
-    if tillage_section is not None:
-        run_kwargs['tillage'] = tillage_section
+    till_sec = build_tillage_section(row)
+    if till_sec is not None: run_kwargs['tillage'] = till_sec
 
-    chemical_section = build_chemical_section(row, base_treatment)
-    if chemical_section is not None:
-        run_kwargs['chemical'] = chemical_section
+    chem_sec = build_chemical_section(row, base_treatment)
+    if chem_sec is not None: run_kwargs['chemical'] = chem_sec
 
     if 'SimulationControls' in base_treatment:
-        sim_controls = clone_record(base_treatment['SimulationControls'])
+        sim_controls = shift_record_dates(base_treatment['SimulationControls'])
         sim_controls['general'] = clone_record(sim_controls['general'])
         sim_controls['management'] = clone_record(sim_controls['management'])
         sim_controls = apply_irrigation_mode(row, sim_controls)
         
-        if fertilizer_section is not None:
+        if fert_sec is not None:
             sim_controls['management']['ferti'] = ferti_flag
-        sim_controls['management']['harvs'] = 'M'   # <-- add this line
+        sim_controls['management']['harvs'] = 'M'
         
-        # Scan all attached sections for the absolute earliest event date
-        earliest_date = parse_planting_date(row['planting_date'])
+        # Safely determine SDATE securely behind the absolute earliest shifted event
+        earliest_date = new_pdate
         for key, section in run_kwargs.items():
+            if hasattr(section, 'items'):
+                for attr, val in section.items():
+                    if hasattr(val, 'toordinal') and 1 < val.year < 9000 and val < earliest_date:
+                        earliest_date = val
             if hasattr(section, 'table') and section.table:
                 for event in section.table:
                     for attr, val in event.items():
-                        if hasattr(val, 'year') and val.year < 9000 and val < earliest_date:
+                        if hasattr(val, 'toordinal') and 1 < val.year < 9000 and val < earliest_date:
                             earliest_date = val
                             
         sim_start = earliest_date - timedelta(days=buffer_days)
@@ -477,6 +501,7 @@ def build_run_kwargs(row, weather_code, soil_code, cultivar_key, treatments, sta
         sim_controls = set_nyears(sim_controls, int(row['NYEARS']))
         sim_controls = set_start_date(sim_controls, sdate_str)
         run_kwargs['simulation_controls'] = sim_controls
+        
     return run_kwargs
 
 class ThreadLogRouter:
