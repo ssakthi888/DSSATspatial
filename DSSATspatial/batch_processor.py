@@ -293,7 +293,10 @@ def build_planting(row, base_treatment):
     
     def get_val(col, default):
         val = row.get(col, default)
-        return default if pd.isna(val) else val
+        # If the cell is completely empty/NaN or just whitespace, use the default
+        if pd.isna(val) or str(val).strip() == '':
+            return default
+        return val
         
     planting = filex.Planting(
         pdate=planting_date,
@@ -304,8 +307,9 @@ def build_planting(row, base_treatment):
         plrs=get_val('PLRS', base_p['plrs']),
         plrd=get_val('PLRD', base_p['plrd']),
         pldp=get_val('PLDP', base_p['pldp']),
-        page=get_val('PAGE', base_p.get('page', -99)),
-        plwt=base_p.get('plwt', -99)  # strictly inherited from the master RIX file
+        # Use -99 directly to avoid format-parsing crashes in non-rice crops like Maize
+        page=get_val('PAGE', -99),
+        plwt=get_val('PLWT', -99.0)
     )
     return planting
 
