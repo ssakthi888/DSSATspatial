@@ -3,6 +3,7 @@
 from datetime import date, datetime
 from collections.abc import MutableMapping, MutableSequence
 from pandas import DataFrame
+import pandas as pd
 import numpy as np
 from typing import Type
 import re
@@ -246,9 +247,12 @@ class DateType(date):
                 try:
                     value = datetime.strptime(value, "%Y%j")
                 except ValueError:
-                    raise ValueError(f"{value} can't be interpreted as a date")
+                    raise ValueError(f"Error in '{name}': '{value}' can't be interpreted as a date")
         else:
-            raise ValueError(f"value must be datetime, date, None, -99 or some date representation")            
+            if pd.isna(value):
+                value = date(9999, 1, 1)
+            else:
+                raise ValueError(f"Error in '{name}': value '{value}' (type: {type(value)}) must be datetime, date, None, -99 or some date representation")            
         return super().__new__(cls, value.year, value.month, value.day)
     
     def __init__(self, name, value, fmt):
