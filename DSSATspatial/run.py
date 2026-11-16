@@ -287,7 +287,7 @@ class DSSAT:
             if "@YEAR" in df.columns and "DOY" in df.columns:
                 # Fully vectorized date calculation using numeric arrays to bypass string overhead
                 date_int = df["@YEAR"].astype(int) * 1000 + df["DOY"].astype(int)
-                df.index = pd.to_datetime(date_int, format="%Y%j")
+                df.index = pd.to_datetime(date_int.astype(str), format="%Y%j")
                 
                 # Keep DOY as a zero-padded string for legacy module compatibility using vectorized zfill
                 df["DOY"] = df["DOY"].astype(int).astype(str).str.zfill(3)
