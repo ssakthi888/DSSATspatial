@@ -659,7 +659,12 @@ def run_dssat(row_number, xlsx_path, sheet_name, sim_dir, wth_folder, treatments
         finally:
             sys.stdout = original_stdout
             
+    if result[2] is not None and result[2] != "SKIPPED":
+        print(f"\n[EXECUTION FAILED] {result[0]} encountered an error:")
+        print(result[2])
+                
     return result
+
 
 def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, stations, soils, crops, 
                       max_workers=8, batch_size=100, compress=True, sdate_buffer=7, 
