@@ -235,9 +235,8 @@ def convert_to_yyddd(date_val):
         date_obj = datetime.strptime(date_str, "%y%j")  # yyddd
     else:
         raise ValueError(f"Unexpected date format: {date_str}")
-    yy = date_obj.year % 100
-    doy = date_obj.timetuple().tm_yday
-    return f"{yy:02d}{doy:03d}"
+    # Force full 4-digit year to prevent DSSAT 2101 century pivot bugs
+    return f"{date_obj.year:04d}{date_obj.timetuple().tm_yday:03d}"
 
 def parse_planting_date(date_val):
     date_str = str(int(float(date_val)))
@@ -278,9 +277,7 @@ def build_sdate(row, buffer_days):
 
     # Calculate simulation start date accommodating the earliest event plus buffer
     sim_start = planting_date + timedelta(days=min_das - buffer_days)
-    yy = sim_start.year % 100
-    doy = sim_start.timetuple().tm_yday
-    return f"{yy:02d}{doy:03d}"
+    return f"{sim_start.year:04d}{sim_start.timetuple().tm_yday:03d}"
 
 def set_start_date(simulation_controls, sdate):
     simulation_controls['general']['sdate'] = sdate
@@ -460,10 +457,10 @@ def build_run_kwargs(row, weather_code, soil_code, cultivar_key, treatments, sta
         # Base SDATE from explicit Excel override or fallback to dynamic calculation
         if 'SDATE' in row and pd.notna(row['SDATE']) and str(row['SDATE']).strip():
             sim_start = parse_planting_date(row['SDATE'])
-            sdate_str = f"{sim_start.year % 100:02d}{sim_start.timetuple().tm_yday:03d}"
+            sdate_str = f"{sim_start.year:04d}{sim_start.timetuple().tm_yday:03d}"
         else:
             sdate_str = build_sdate(row, buffer_days)
-            sim_start = datetime.strptime(sdate_str, "%y%j").date()
+            sim_start = datetime.strptime(sdate_str, "%Y%j").date()
             
             # Override to 7 days before Tillage if Tillage is present and earlier
             if 'tillage' in run_kwargs and run_kwargs['tillage'].table:
@@ -477,7 +474,7 @@ def build_run_kwargs(row, weather_code, soil_code, cultivar_key, treatments, sta
                     earliest_till = min(till_dates)
                     if earliest_till < sim_start:
                         sim_start = earliest_till - timedelta(days=buffer_days)
-                        sdate_str = f"{sim_start.year % 100:02d}{sim_start.timetuple().tm_yday:03d}"
+                        sdate_str = f"{sim_start.year:04d}{sim_start.timetuple().tm_yday:03d}"
                         
         sim_controls = set_nyears(sim_controls, int(row['NYEARS']))
         sim_controls = set_start_date(sim_controls, sdate_str)
