@@ -26,6 +26,9 @@ from .run import DSSAT
 # Global Execution Constants
 FERT_MATERIAL = {'N': 'FE005', 'P': 'FE010', 'K': 'FE016'}
 
+# Thread locks for shared dictionary mutations
+_AUTO_HEAL_LOCK = threading.Lock()
+
 # 1. Environment Setup
 def prepare_workspace(sim_dir, is_batch=True):
     # Ensure base simulation directory exists safely
@@ -478,8 +481,8 @@ def build_run_kwargs(row, weather_code, soil_code, cultivar_key, treatments, sta
 
     if 'SimulationControls' in base_treatment:
         sim_controls = clone_record(base_treatment['SimulationControls'])
-        sim_controls['general'] = clone_record(sim_controls['general'])
-        sim_controls['management'] = clone_record(sim_controls['management'])
+        for key in sim_controls.dtypes.keys():
+            sim_controls[key] = clone_record(sim_controls[key])
         sim_controls = apply_irrigation_mode(row, sim_controls)
         sim_controls['management']['ferti'] = ferti_flag
         sim_controls['management']['harvs'] = 'M'   # <-- add this line
@@ -928,18 +931,22 @@ def build_filex_run_kwargs(base_treatment, stations, soils, crops, wth_folder, s
         if block in base_treatment:
             run_kwargs[kwarg] = clone_record(base_treatment[block])
             
+    if "simulation_controls" in run_kwargs:
+        for key in run_kwargs["simulation_controls"].dtypes.keys():
+            run_kwargs["simulation_controls"][key] = clone_record(run_kwargs["simulation_controls"][key])
+            
     wsta_id = str(base_treatment['Field']['wsta']).strip()
     soil_id = str(base_treatment['Field']['id_soil']).strip()
     
-    # Auto-Heal: If Excel missed the weather station, pull it from disk
-    if wsta_id not in stations:
-        wth_file = os.path.join(wth_folder, f"{wsta_id}.WTH")
-        stations[wsta_id] = load_single_station(wth_file)[1]
-        
-    # Auto-Heal: If Excel missed the soil, pull it from disk
-    if soil_id not in soils and sol_file_path:
-        header_lines, blocks = index_soil_blocks(sol_file_path)
-        soils[soil_id] = initialize_all_soils_in_memory([soil_id], header_lines, blocks)[0][soil_id]
+    # Auto-Heal: Safely mutate shared dictionaries under a lock to prevent nested thread storms
+    with _AUTO_HEAL_LOCK:
+        if wsta_id not in stations:
+            wth_file = os.path.join(wth_folder, f"{wsta_id}.WTH")
+            stations[wsta_id] = load_single_station(wth_file)[1]
+            
+        if soil_id not in soils and sol_file_path:
+            header_lines, blocks = index_soil_blocks(sol_file_path)
+            soils[soil_id] = initialize_all_soils_in_memory([soil_id], header_lines, blocks)[0][soil_id]
         
     field = clone_record(base_treatment['Field'])
     field['wsta'] = stations[wsta_id]
