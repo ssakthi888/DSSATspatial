@@ -492,14 +492,20 @@ def build_run_kwargs(row, weather_code, soil_code, cultivar_key, treatments, sta
         sim_controls['management']['harvs'] = 'M'
         
         # Universal SDATE Scanner: Check all merged events
-        all_dates = [parse_planting_date(get_action_date(row))]
+        planting_date = parse_planting_date(get_action_date(row))
+        all_dates = [planting_date]
         
         for section_key in ['tillage', 'fertilizer', 'irrigation', 'chemical', 'residue']:
             if section_key in run_kwargs and run_kwargs[section_key].table:
                 for evt in run_kwargs[section_key].table:
                     for val in evt.values():
-                        if hasattr(val, 'year') and val.year < 9000:
-                            all_dates.append(datetime(val.year, val.month, val.day).date())
+                        # Exclude 9999 (blanks) and Year 1 (Relative Day 0)
+                        if hasattr(val, 'year') and 1 < val.year < 9000:
+                            evt_date = datetime(val.year, val.month, val.day).date()
+                            # Filter out relative Days After Planting (which parse as Year 2000)
+                            # by only accepting true absolute dates within ~2.5 years of planting
+                            if abs((evt_date - planting_date).days) < 1000:
+                                all_dates.append(evt_date)
                             
         sim_start = min(all_dates) - timedelta(days=buffer_days)
         sdate_str = f"{sim_start.year % 100:02d}{sim_start.timetuple().tm_yday:03d}"
