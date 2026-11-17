@@ -415,8 +415,10 @@ def parse_nutrient_schedule(schedule_str):
 
 def build_fertilizer_section(row, fert_material):
     fert_flag = str(row.get('Fertilizer', '')).strip().lower()
+    if fert_flag == 'no':
+        return None, 'N'  # explicitly disable
     if fert_flag != 'yes':
-        return None, 'N'  # no fertilizer block, N/P/K columns not read
+        return None, None # passthrough native RIX
     planting_date = parse_planting_date(get_action_date(row))
     fert_events = []
     for nutrient, col in [('N', 'N_application'), ('P', 'P_application'), ('K', 'K_application')]:
@@ -483,29 +485,26 @@ def build_run_kwargs(row, weather_code, soil_code, cultivar_key, treatments, sta
         for key in sim_controls.dtypes.keys():
             sim_controls[key] = clone_record(sim_controls[key])
         sim_controls = apply_irrigation_mode(row, sim_controls)
-        sim_controls['management']['ferti'] = ferti_flag
-        sim_controls['management']['harvs'] = 'M'   # <-- add this line
         
-        # Base SDATE from Excel scheduling
-        sdate_str = build_sdate(row, buffer_days)
-        sim_start = datetime.strptime(sdate_str, "%y%j").date()
+        if ferti_flag is not None:
+            sim_controls['management']['ferti'] = ferti_flag
+            
+        sim_controls['management']['harvs'] = 'M'
         
-        # Override to 7 days before Tillage if Tillage is present and earlier
-        if 'tillage' in run_kwargs and run_kwargs['tillage'].table:
-            till_dates = []
-            for evt in run_kwargs['tillage'].table:
-                if hasattr(evt['tdate'], 'year') and evt['tdate'].year < 9000:
-                    # Cast custom DateType to standard Python date to safely bypass subclass constructor crash
-                    pure_date = datetime(evt['tdate'].year, evt['tdate'].month, evt['tdate'].day).date()
-                    till_dates.append(pure_date)
+        # Universal SDATE Scanner: Check all merged events
+        all_dates = [parse_planting_date(get_action_date(row))]
+        
+        for section_key in ['tillage', 'fertilizer', 'irrigation', 'chemical', 'residue']:
+            if section_key in run_kwargs and run_kwargs[section_key].table:
+                for evt in run_kwargs[section_key].table:
+                    for val in evt.values():
+                        if hasattr(val, 'year') and val.year < 9000:
+                            all_dates.append(datetime(val.year, val.month, val.day).date())
+                            
+        sim_start = min(all_dates) - timedelta(days=buffer_days)
+        sdate_str = f"{sim_start.year % 100:02d}{sim_start.timetuple().tm_yday:03d}"
                     
-            if till_dates:
-                earliest_till = min(till_dates)
-                if earliest_till < sim_start:
-                    sim_start = earliest_till - timedelta(days=buffer_days)
-                    sdate_str = f"{sim_start.year % 100:02d}{sim_start.timetuple().tm_yday:03d}"
-                    
-        sim_controls = set_nyears(sim_controls, int(row['NYEARS']))
+        sim_controls = set_nyears(sim_controls, int(row.get('NYEARS', 1)))
         sim_controls = set_start_date(sim_controls, sdate_str)
         run_kwargs['simulation_controls'] = sim_controls
         
