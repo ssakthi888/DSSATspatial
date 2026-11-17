@@ -887,6 +887,116 @@ def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, st
         sys.stdout = console_stdout
         progress_bar.close()
 
+def build_filex_run_kwargs(base_treatment, stations, soils, crops, wth_folder):
+    # Configuration extraction and mapping
+    run_kwargs = {}
+    for block in ["Harvest", "InitialConditions", "Fertilizer", "SoilAnalysis", "Irrigation", "Residue", "Chemical", "Tillage", "Mow", "SimulationControls", "Planting"]:
+        if block in base_treatment:
+            run_kwargs[block.lower()] = clone_record(base_treatment[block])
+            
+    field = clone_record(base_treatment['Field'])
+    field['wsta'] = stations[field['wsta']]
+    field['id_soil'] = soils[field['id_soil']]
+    run_kwargs['field'] = field
+    
+    # Cultivar matching logic prioritizing custom in-memory parameters
+    base_cul = base_treatment['Cultivar']
+    filex_ingeno = base_cul['ingeno'].strip()
+    matched_crop = None
+    
+    for custom_crop in crops.values():
+        if hasattr(custom_crop, "_Crop__cultivar") and custom_crop._Crop__cultivar._code.strip() == filex_ingeno:
+            matched_crop = custom_crop
+            break
+            
+    run_kwargs['cultivar'] = matched_crop if matched_crop else base_cul.crop
+    run_kwargs['wth_dir'] = wth_folder
+    run_kwargs['verbose'] = False
+    
+    return run_kwargs
+
+def run_filex_dssat(trt_num, sim_dir, wth_folder, treatments, stations, soils, crops):
+    if trt_num not in treatments:
+        raise ValueError(f"Treatment {trt_num} not found in loaded FileX.")
+        
+    prepare_workspace(sim_dir, is_batch=False)
+    pad_width = len(str(max(treatments.keys())))
+    run_label = f"T_{trt_num:0{pad_width}d}"
+    sim_folder = os.path.join(sim_dir, run_label)
+    
+    run_kwargs = build_filex_run_kwargs(treatments[trt_num], stations, soils, crops, wth_folder)
+    run_kwargs['verbose'] = True
+    
+    original_stdout = sys.stdout
+    with open(os.devnull, 'w') as devnull:
+        sys.stdout = devnull
+        try:
+            dssat = DSSAT(sim_folder)
+            result = dssat.run_treatment(**run_kwargs)
+        finally:
+            sys.stdout = original_stdout
+            
+    print(f"[{run_label}] Execution Completed Successfully.")
+    return result
+
+def _filex_worker(worker_id, trt_chunk, pad_width, stdout_router, progress_bar, progress_lock, worker_pad, log_dir, sim_dir, wth_folder, treatments, stations, soils, crops):
+    worker_tag = f"worker_{worker_id:0{worker_pad}d}"
+    output_path = os.path.join(log_dir, f"{worker_tag}_output.txt")
+    error_path = os.path.join(log_dir, f"{worker_tag}_errors.txt")
+    
+    with open(output_path, "a", encoding="utf-8") as output_handle:
+        output_handle.write(f"\n--- NATIVE FILEX BATCH START ---\n")
+        stdout_router.register(output_handle)
+        
+        for trt_num in trt_chunk:
+            run_label = f"T_{trt_num:0{pad_width}d}"
+            sim_folder = os.path.join(sim_dir, run_label)
+            
+            if treatment_done(sim_folder):
+                with progress_lock:
+                    progress_bar.update(1)
+                continue
+            
+            try:
+                run_kwargs = build_filex_run_kwargs(treatments[trt_num], stations, soils, crops, wth_folder)
+                dssat = DSSAT(sim_folder)
+                dssat.run_treatment(**run_kwargs)
+            except Exception as e:
+                print(f"[{run_label}] FAILED: {type(e).__name__}: {e}")
+                with open(error_path, "a", encoding="utf-8") as f:
+                    f.write(f"{run_label}: {e}\n")
+                    
+            with progress_lock:
+                progress_bar.update(1)
+
+def run_filex_batch(sim_dir, wth_folder, treatments, stations, soils, crops, max_workers=8):
+    log_dir, archive_dir, failed_log, output_csv = prepare_workspace(sim_dir, is_batch=True)
+    
+    console_stdout = sys.stdout
+    stdout_router = ThreadLogRouter()
+    sys.stdout = stdout_router
+    progress_lock = threading.Lock()
+    progress_bar = tqdm(total=len(treatments), desc="Simulating Native FileX", file=console_stdout)
+    
+    pad_width = len(str(max(treatments.keys())))
+    worker_pad = len(str(max_workers))
+    
+    trt_keys = list(treatments.keys())
+    chunks = [trt_keys[i::max_workers] for i in range(max_workers)]
+    
+    try:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(_filex_worker, i+1, chunk, pad_width, stdout_router, progress_bar, progress_lock, worker_pad, log_dir, sim_dir, wth_folder, treatments, stations, soils, crops) 
+                for i, chunk in enumerate(chunks) if chunk
+            ]
+            for future in as_completed(futures):
+                _ = future.result()
+    finally:
+        sys.stdout = console_stdout
+        progress_bar.close()
+    
+
 def add_cultivar(cultivar_dict, crop_name):
     # Fetch crop class dynamically
     crop_class = getattr(crop, crop_name)
@@ -920,3 +1030,4 @@ def add_cultivar(cultivar_dict, crop_name):
         updated_cultivars[key] = crop_obj
         
     return updated_cultivars
+
