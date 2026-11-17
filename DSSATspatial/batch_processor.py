@@ -911,9 +911,22 @@ def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, st
 def build_filex_run_kwargs(base_treatment, stations, soils, crops, wth_folder, sol_file_path=None):
     # Configuration extraction and mapping
     run_kwargs = {}
-    for block in ["Harvest", "InitialConditions", "Fertilizer", "SoilAnalysis", "Irrigation", "Residue", "Chemical", "Tillage", "Mow", "SimulationControls", "Planting"]:
+    block_map = {
+        "Harvest": "harvest",
+        "InitialConditions": "initial_conditions",
+        "Fertilizer": "fertilizer",
+        "SoilAnalysis": "soil_analysis",
+        "Irrigation": "irrigation",
+        "Residue": "residue",
+        "Chemical": "chemical",
+        "Tillage": "tillage",
+        "Mow": "mow",
+        "SimulationControls": "simulation_controls",
+        "Planting": "planting"
+    }
+    for block, kwarg in block_map.items():
         if block in base_treatment:
-            run_kwargs[block.lower()] = clone_record(base_treatment[block])
+            run_kwargs[kwarg] = clone_record(base_treatment[block])
             
     wsta_id = str(base_treatment['Field']['wsta']).strip()
     soil_id = str(base_treatment['Field']['id_soil']).strip()
