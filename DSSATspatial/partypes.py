@@ -9,7 +9,6 @@ from typing import Type
 import re
 import os
 from .utils import detect_encoding
-import datetime
 
 CROPS_MODULES = {
     "Maize": "MZCER",
@@ -269,7 +268,7 @@ class DateType(date):
             return _format(-99, f'>{len_fmt}.0f')
         elif self.year == 1:
             # len_fmt = len(self.strftime(self.fmt))
-            len_fmt = len(datetime.datetime(2000, 1, 1).strftime(self.fmt))
+            len_fmt = len(datetime(2000, 1, 1).strftime(self.fmt))
             return _format(0, f'>{len_fmt}.0f')
         else:
             return _format(self, self.fmt)
