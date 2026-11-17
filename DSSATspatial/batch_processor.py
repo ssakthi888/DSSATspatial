@@ -908,16 +908,29 @@ def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, st
         sys.stdout = console_stdout
         progress_bar.close()
 
-def build_filex_run_kwargs(base_treatment, stations, soils, crops, wth_folder):
+def build_filex_run_kwargs(base_treatment, stations, soils, crops, wth_folder, sol_file_path=None):
     # Configuration extraction and mapping
     run_kwargs = {}
     for block in ["Harvest", "InitialConditions", "Fertilizer", "SoilAnalysis", "Irrigation", "Residue", "Chemical", "Tillage", "Mow", "SimulationControls", "Planting"]:
         if block in base_treatment:
             run_kwargs[block.lower()] = clone_record(base_treatment[block])
             
+    wsta_id = str(base_treatment['Field']['wsta']).strip()
+    soil_id = str(base_treatment['Field']['id_soil']).strip()
+    
+    # Auto-Heal: If Excel missed the weather station, pull it from disk
+    if wsta_id not in stations:
+        wth_file = os.path.join(wth_folder, f"{wsta_id}.WTH")
+        stations[wsta_id] = load_single_station(wth_file)[1]
+        
+    # Auto-Heal: If Excel missed the soil, pull it from disk
+    if soil_id not in soils and sol_file_path:
+        header_lines, blocks = index_soil_blocks(sol_file_path)
+        soils[soil_id] = initialize_all_soils_in_memory([soil_id], header_lines, blocks)[0][soil_id]
+        
     field = clone_record(base_treatment['Field'])
-    field['wsta'] = stations[field['wsta']]
-    field['id_soil'] = soils[field['id_soil']]
+    field['wsta'] = stations[wsta_id]
+    field['id_soil'] = soils[soil_id]
     run_kwargs['field'] = field
     
     # Cultivar matching logic prioritizing custom in-memory parameters
@@ -936,7 +949,7 @@ def build_filex_run_kwargs(base_treatment, stations, soils, crops, wth_folder):
     
     return run_kwargs
 
-def run_filex_dssat(trt_num, sim_dir, wth_folder, treatments, stations, soils, crops):
+def run_filex_dssat(trt_num, sim_dir, wth_folder, treatments, stations, soils, crops,sol_file_path=None):
     if trt_num not in treatments:
         raise ValueError(f"Treatment {trt_num} not found in loaded FileX.")
         
@@ -945,7 +958,7 @@ def run_filex_dssat(trt_num, sim_dir, wth_folder, treatments, stations, soils, c
     run_label = f"T_{trt_num:0{pad_width}d}"
     sim_folder = os.path.join(sim_dir, run_label)
     
-    run_kwargs = build_filex_run_kwargs(treatments[trt_num], stations, soils, crops, wth_folder)
+    run_kwargs = build_filex_run_kwargs(treatments[trt_num], stations, soils, crops, wth_folder, sol_file_path)
     run_kwargs['verbose'] = True
     
     original_stdout = sys.stdout
@@ -960,7 +973,7 @@ def run_filex_dssat(trt_num, sim_dir, wth_folder, treatments, stations, soils, c
     print(f"[{run_label}] Execution Completed Successfully.")
     return result
 
-def _filex_worker(worker_id, trt_chunk, pad_width, stdout_router, progress_bar, progress_lock, worker_pad, log_dir, sim_dir, wth_folder, treatments, stations, soils, crops):
+def _filex_worker(worker_id, trt_chunk, pad_width, stdout_router, progress_bar, progress_lock, worker_pad, log_dir, sim_dir, wth_folder, treatments, stations, soils, crops, sol_file_path=None):
     worker_tag = f"worker_{worker_id:0{worker_pad}d}"
     output_path = os.path.join(log_dir, f"{worker_tag}_output.txt")
     error_path = os.path.join(log_dir, f"{worker_tag}_errors.txt")
@@ -979,7 +992,7 @@ def _filex_worker(worker_id, trt_chunk, pad_width, stdout_router, progress_bar, 
                 continue
             
             try:
-                run_kwargs = build_filex_run_kwargs(treatments[trt_num], stations, soils, crops, wth_folder)
+                run_kwargs = build_filex_run_kwargs(treatments[trt_num], stations, soils, crops, wth_folder, sol_file_path)
                 dssat = DSSAT(sim_folder)
                 dssat.run_treatment(**run_kwargs)
             except Exception as e:
@@ -990,7 +1003,7 @@ def _filex_worker(worker_id, trt_chunk, pad_width, stdout_router, progress_bar, 
             with progress_lock:
                 progress_bar.update(1)
 
-def run_filex_batch(sim_dir, wth_folder, treatments, stations, soils, crops, max_workers=8):
+def run_filex_batch(sim_dir, wth_folder, treatments, stations, soils, crops, max_workers=8, sol_file_path=None):
     log_dir, archive_dir, failed_log, output_csv = prepare_workspace(sim_dir, is_batch=True)
     
     console_stdout = sys.stdout
@@ -1008,7 +1021,7 @@ def run_filex_batch(sim_dir, wth_folder, treatments, stations, soils, crops, max
     try:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [
-                executor.submit(_filex_worker, i+1, chunk, pad_width, stdout_router, progress_bar, progress_lock, worker_pad, log_dir, sim_dir, wth_folder, treatments, stations, soils, crops) 
+                executor.submit(_filex_worker, i+1, chunk, pad_width, stdout_router, progress_bar, progress_lock, worker_pad, log_dir, sim_dir, wth_folder, treatments, stations, soils, crops, sol_file_path) 
                 for i, chunk in enumerate(chunks) if chunk
             ]
             for future in as_completed(futures):
