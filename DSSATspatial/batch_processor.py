@@ -510,7 +510,9 @@ def build_run_kwargs(row, weather_code, soil_code, cultivar_key, treatments, sta
         sim_start = min(all_dates) - timedelta(days=buffer_days)
         sdate_str = f"{sim_start.year % 100:02d}{sim_start.timetuple().tm_yday:03d}"
                     
-        sim_controls = set_nyears(sim_controls, int(row.get('NYEARS', 1)))
+        nyears_val = row.get('NYEARS')
+        clean_nyears = int(nyears_val) if pd.notna(nyears_val) and str(nyears_val).strip() != '' else 1
+        sim_controls = set_nyears(sim_controls, clean_nyears)
         sim_controls = set_start_date(sim_controls, sdate_str)
         run_kwargs['simulation_controls'] = sim_controls
         
@@ -815,7 +817,8 @@ def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, st
                     is_complete = False
                     
                     if df is not None:
-                        expected_nyears = int(row['NYEARS'])
+                        nyears_val = row.get('NYEARS')
+                        expected_nyears = int(nyears_val) if pd.notna(nyears_val) and str(nyears_val).strip() != '' else 1
                         
                         # Primary: Row-count validation
                         if len(df) >= expected_nyears:
