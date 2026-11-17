@@ -1016,29 +1016,167 @@ def _filex_worker(worker_id, trt_chunk, pad_width, stdout_router, progress_bar, 
             with progress_lock:
                 progress_bar.update(1)
 
-def run_filex_batch(sim_dir, wth_folder, treatments, stations, soils, crops, max_workers=8, sol_file_path=None):
+def run_filex_batch(sim_dir, wth_folder, treatments, stations, soils, crops, max_workers=8, sol_file_path=None, compress=True, batch_size=None, columns_to_keep=None, summary_filename="Summary.OUT"):
     log_dir, archive_dir, failed_log, output_csv = prepare_workspace(sim_dir, is_batch=True)
     
+    trt_keys = list(treatments.keys())
+    total_treatments = len(trt_keys)
+    pad_width = len(str(max(treatments.keys())))
+    worker_pad = len(str(max_workers))
+    
+    # State-Tracking: Scan existing archives for completed treatments
+    completed_treatments = set()
+    existing_zips = glob.glob(os.path.join(archive_dir, "Success_Batch_*.zip"))
+    batch_offset = len(existing_zips)
+    
+    trt_pattern = re.compile(r'T_(\d+)/')
+    for zip_path in existing_zips:
+        try:
+            with zipfile.ZipFile(zip_path, 'r') as z:
+                for name in z.namelist():
+                    match = trt_pattern.search(name)
+                    if match:
+                        completed_treatments.add(int(match.group(1)))
+        except zipfile.BadZipFile:
+            continue
+            
+    if completed_treatments:
+        trt_keys = [t for t in trt_keys if t not in completed_treatments]
+        print(f"Resuming execution: Skipped {len(completed_treatments)} completed treatments. {len(trt_keys)} remaining.")
+        
+    def consolidate_summary():
+        batch_csv_files = sorted(glob.glob(os.path.join(archive_dir, "Success_Batch_*.csv")))
+        if batch_csv_files:
+            if os.path.exists(output_csv):
+                os.remove(output_csv)
+            merged_df = pd.concat([pd.read_csv(f) for f in batch_csv_files], ignore_index=True)
+            if columns_to_keep:
+                for col in columns_to_keep:
+                    if col not in merged_df.columns:
+                        merged_df[col] = None
+                merged_df = merged_df[columns_to_keep]
+            merged_df.to_csv(output_csv, index=False)
+            print(f"Master summary successfully consolidated.")
+
+    if not trt_keys:
+        print("All treatments are already completed. Rebuilding master summary CSV...")
+        consolidate_summary()
+        return
+
+    if batch_size is None:
+        batch_size = len(trt_keys)
+
     console_stdout = sys.stdout
     stdout_router = ThreadLogRouter()
     sys.stdout = stdout_router
     progress_lock = threading.Lock()
-    progress_bar = tqdm(total=len(treatments), desc="Simulating Native FileX", file=console_stdout)
+    progress_bar = tqdm(total=len(trt_keys), desc="Simulating Native FileX", file=console_stdout)
     
-    pad_width = len(str(max(treatments.keys())))
-    worker_pad = len(str(max_workers))
-    
-    trt_keys = list(treatments.keys())
-    chunks = [trt_keys[i::max_workers] for i in range(max_workers)]
+    batches = [trt_keys[i:i + batch_size] for i in range(0, len(trt_keys), batch_size)]
+    archive_threads = []
     
     try:
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [
-                executor.submit(_filex_worker, i+1, chunk, pad_width, stdout_router, progress_bar, progress_lock, worker_pad, log_dir, sim_dir, wth_folder, treatments, stations, soils, crops, sol_file_path) 
-                for i, chunk in enumerate(chunks) if chunk
-            ]
-            for future in as_completed(futures):
-                _ = future.result()
+        for batch_idx, batch_keys in enumerate(batches, start=batch_offset + 1):
+            chunks = [batch_keys[i::max_workers] for i in range(max_workers)]
+            
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [
+                    executor.submit(_filex_worker, i+1, chunk, pad_width, stdout_router, progress_bar, progress_lock, worker_pad, log_dir, sim_dir, wth_folder, treatments, stations, soils, crops, sol_file_path) 
+                    for i, chunk in enumerate(chunks) if chunk
+                ]
+                for future in as_completed(futures):
+                    _ = future.result()
+            
+            batch_dfs = []
+            failed_list = []
+            success_temp = os.path.join(sim_dir, f"Success_Temp_{batch_idx:04d}")
+            error_temp = os.path.join(sim_dir, f"Error_Temp_{batch_idx:04d}")
+            os.makedirs(success_temp, exist_ok=True)
+            os.makedirs(error_temp, exist_ok=True)
+            
+            for trt_num in batch_keys:
+                run_label = f"T_{trt_num:0{pad_width}d}"
+                sim_folder = os.path.join(sim_dir, run_label)
+                
+                if not os.path.exists(sim_folder):
+                    continue
+                    
+                summary_file = os.path.join(sim_folder, summary_filename)
+                is_success = False
+                
+                if os.path.exists(summary_file):
+                    df = parse_summary_out(summary_file)
+                    if df is not None and not df.empty:
+                        df.insert(0, "Treatment", trt_num)
+                        cultivar_obj = treatments[trt_num].get('Cultivar')
+                        cultivar_name = cultivar_obj['ingeno'] if cultivar_obj else "UNKNOWN"
+                        df.insert(1, "cultivar", cultivar_name)
+                        
+                        wsta_col = next((col for col in df.columns if "WSTA" in col.upper()), None)
+                        if wsta_col is not None:
+                            gcodes = df[wsta_col].astype(str).str[:4]
+                            lat_map = {k[:4]: float(v["lat"]) for k, v in stations.items()}
+                            lon_map = {k[:4]: float(v["long"]) for k, v in stations.items()}
+                            df.insert(2, "GCODE", gcodes)
+                            df.insert(3, "Latitude", gcodes.map(lambda g: lat_map.get(g)))
+                            df.insert(4, "Longitude", gcodes.map(lambda g: lon_map.get(g)))
+                        else:
+                            df.insert(2, "GCODE", None)
+                            df.insert(3, "Latitude", None)
+                            df.insert(4, "Longitude", None)
+                            
+                        batch_dfs.append(df)
+                        is_success = True
+                
+                if is_success:
+                    shutil.move(sim_folder, os.path.join(success_temp, run_label))
+                else:
+                    failed_list.append(str(trt_num))
+                    shutil.move(sim_folder, os.path.join(error_temp, run_label))
+            
+            if batch_dfs:
+                merged_df = pd.concat(batch_dfs, ignore_index=True)
+                batch_csv_path = os.path.join(archive_dir, f"Success_Batch_{batch_idx:04d}.csv")
+                merged_df.to_csv(batch_csv_path, index=False)
+            
+            if failed_list:
+                with open(failed_log, "a") as f:
+                    for f_trt in failed_list:
+                        f.write(f"{f_trt}\n")
+            
+            if compress:
+                def background_archive_and_clean(archive_path, temp_path):
+                    if os.path.exists(temp_path) and os.listdir(temp_path):
+                        shutil.make_archive(archive_path, 'zip', temp_path)
+                    shutil.rmtree(temp_path, ignore_errors=True)
+
+                t_success = threading.Thread(
+                    target=background_archive_and_clean, 
+                    args=(os.path.join(archive_dir, f"Success_Batch_{batch_idx:04d}"), success_temp)
+                )
+                t_error = threading.Thread(
+                    target=background_archive_and_clean, 
+                    args=(os.path.join(archive_dir, f"Error_Batch_{batch_idx:04d}"), error_temp)
+                )
+                t_success.start()
+                t_error.start()
+                archive_threads.extend([t_success, t_error])
+            else:
+                if os.path.exists(success_temp) and os.listdir(success_temp):
+                    os.rename(success_temp, os.path.join(archive_dir, f"Success_Batch_{batch_idx:04d}"))
+                else:
+                    shutil.rmtree(success_temp, ignore_errors=True)
+                    
+                if os.path.exists(error_temp) and os.listdir(error_temp):
+                    os.rename(error_temp, os.path.join(archive_dir, f"Error_Batch_{batch_idx:04d}"))
+                else:
+                    shutil.rmtree(error_temp, ignore_errors=True)
+
+        for t in archive_threads:
+            t.join()
+
+        consolidate_summary()
+            
     finally:
         sys.stdout = console_stdout
         progress_bar.close()
