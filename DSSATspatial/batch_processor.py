@@ -263,6 +263,9 @@ def convert_to_yyddd(date_val):
     doy = date_obj.timetuple().tm_yday
     return f"{yy:02d}{doy:03d}"
 
+def get_action_date(row):
+    return row.get('transplanting_date') if pd.notna(row.get('transplanting_date')) and str(row.get('transplanting_date')).strip() != '' else row.get('planting_date')
+
 def parse_planting_date(date_val):
     date_str = str(int(date_val))
     if len(date_str) == 8:
@@ -296,7 +299,7 @@ def build_tillage_section(row):
     events = parse_tillage_schedule(schedule_str)
     if not events:
         return None
-    planting_date = parse_planting_date(row['planting_date'])
+    planting_date = parse_planting_date(get_action_date(row))
     tillage_events = []
     for das, timpl, tdep in events:
         tdate = planting_date + timedelta(days=das)
@@ -308,7 +311,7 @@ def build_chemical_section(row, base_treatment):
         return None
     base_chem = base_treatment['Chemical']
     base_pdate = base_treatment['Planting']['pdate']
-    new_pdate = parse_planting_date(row['planting_date'])
+    new_pdate = parse_planting_date(get_action_date(row))
     chem_events = []
     for event in base_chem.table:
         das = (event['cdate'] - base_pdate).days
@@ -318,7 +321,7 @@ def build_chemical_section(row, base_treatment):
     return filex.Chemical(table=chem_events)
 
 def build_sdate(row, buffer_days):
-    planting_date = parse_planting_date(row['planting_date'])
+    planting_date = parse_planting_date(get_action_date(row))
     min_das = 0
     
     # Check Tillage
@@ -348,19 +351,15 @@ def set_start_date(simulation_controls, sdate):
     simulation_controls['general']['start'] = 'S'
     return simulation_controls
 
-def build_planting(row):
-    planting_date = convert_to_yyddd(row['planting_date'])
-    planting = filex.Planting(
-        pdate=planting_date,
-        ppop=row['PLPOP'],
-        ppoe=row['PPOE'],
-        plme='S',
-        plds='R',
-        plrs=row['PLRS'],
-        plrd=90.0,
-        pldp=row['PLDP']
-    )
-    return planting
+def merge_planting(row, base_planting):
+    merged = clone_record(base_planting)
+    merged['pdate'] = convert_to_yyddd(get_action_date(row))
+    
+    for col, attr in [('PLPOP', 'ppop'), ('PPOE', 'ppoe'), ('PLRS', 'plrs'), ('PLDP', 'pldp')]:
+        if pd.notna(row.get(col)) and str(row.get(col)).strip() != '':
+            merged[attr] = row[col]
+            
+    return merged
 
 def parse_irrigation_schedule(schedule_str):
     events = []
@@ -379,7 +378,7 @@ def build_irrigation_section(row):
     schedule_str = row.get('IRRIG_SCHEDULE', '')
     if pd.isna(schedule_str) or str(schedule_str).strip().lower() in ['', 'nan']:
         return None
-    planting_date = parse_planting_date(row['planting_date'])
+    planting_date = parse_planting_date(get_action_date(row))
     irrigation_events = [
         filex.IrrigationEvent(idate=planting_date + timedelta(days=das), irval=mm, irop='IR001')
         for das, mm in parse_irrigation_schedule(schedule_str)
@@ -418,7 +417,7 @@ def build_fertilizer_section(row, fert_material):
     fert_flag = str(row.get('Fertilizer', '')).strip().lower()
     if fert_flag != 'yes':
         return None, 'N'  # no fertilizer block, N/P/K columns not read
-    planting_date = parse_planting_date(row['planting_date'])
+    planting_date = parse_planting_date(get_action_date(row))
     fert_events = []
     for nutrient, col in [('N', 'N_application'), ('P', 'P_application'), ('K', 'K_application')]:
         for das, kg in parse_nutrient_schedule(row.get(col, '')):
@@ -460,7 +459,7 @@ def build_run_kwargs(row, weather_code, soil_code, cultivar_key, treatments, sta
         if key in base_treatment:
             run_kwargs[arg_name] = clone_record(base_treatment[key])
 
-    run_kwargs['planting'] = build_planting(row)
+    run_kwargs['planting'] = merge_planting(row, base_treatment['Planting'])
 
     # Excel scheduling overlay
     irrigation_section = build_irrigation_section(row)
@@ -818,7 +817,7 @@ def run_spatial_batch(xlsx_path, sheet_name, sim_dir, wth_folder, treatments, st
                             is_complete = True
                         elif not df.empty:
                             # Secondary: Timestamp-based validation accommodating late-season overflow
-                            start_year = parse_planting_date(row['planting_date']).year
+                            start_year = parse_planting_date(get_action_date(row)).year
                             expected_final_year = str(start_year + expected_nyears - 1)
                             expected_overflow_year = str(start_year + expected_nyears)
                             
