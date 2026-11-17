@@ -209,7 +209,28 @@ def load_soil(xlsx_path, sheet_name, id_column, sol_file_path, max_workers=4):
 
 # load treatments
 def load_management_file(filex_path):
-    all_treatments = filex.read_filex(filex_path)
+    # Temporarily intercept Cultivar instantiation to prevent parser crashes on custom cultivars
+    original_init = filex.Cultivar.__init__
+    
+    def safe_init(self, cr, ingeno, cname=None):
+        filex.Record.__init__(self)
+        kwargs = {'cr': cr, 'ingeno': ingeno, 'cname': cname}
+        for name, value in kwargs.items():
+            filex.Record.__setitem__(self, name, value)
+        try:
+            self._Cultivar__crop = filex.CROP_OBJECTS[cr.upper()](ingeno)
+        except RuntimeError:
+            # Soft-fail for custom cultivars not in native .CUL; injected later
+            self._Cultivar__crop = None
+            
+    filex.Cultivar.__init__ = safe_init
+    
+    try:
+        all_treatments = filex.read_filex(filex_path)
+    finally:
+        # Guarantee the original parser is restored immediately after loading
+        filex.Cultivar.__init__ = original_init
+        
     treatments = {}
     for treatment_num in all_treatments:
         treatments[treatment_num] = all_treatments[treatment_num]
