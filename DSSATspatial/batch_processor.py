@@ -1229,4 +1229,3 @@ def add_cultivar(cultivar_dict, crop_name):
         updated_cultivars[key] = crop_obj
         
     return updated_cultivars
-
