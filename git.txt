@@ -1,1 +1,2 @@
+#run this code everytime in diff sytems to sync files
 git pull --no-rebase origin develop
